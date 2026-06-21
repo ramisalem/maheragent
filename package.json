@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc --build",
     "start:tool-server": "npm run build -w @ramisalem/registry && npm run dev -w @ramisalem/tool-server",
+    "test": "npm test --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
