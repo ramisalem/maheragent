@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/registry" },
+    { "path": "packages/configuration-core" },
+    { "path": "packages/update-core" },
+    { "path": "packages/telemetry" },
+    { "path": "packages/tool-server" },
+    { "path": "packages/mcp" },
+    { "path": "packages/cli" },
+    { "path": "packages/installer" },
+    { "path": "packages/maheragent" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "maheragent",
+  "version": "0.1.0",
+  "description": "AI control for your web app, verified against your Figma design.",
+  "type": "module",
+  "bin": { "maheragent": "dist/cli.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsc --build --watch"
+  },
+  "dependencies": {
+    "@ramisalem/cli": "0.1.0",
+    "@ramisalem/installer": "0.1.0",
+    "@ramisalem/mcp": "0.1.0"
+  }
+}

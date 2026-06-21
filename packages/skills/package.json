@@ -1,0 +1,6 @@
+{
+  "name": "@ramisalem/skills",
+  "version": "0.1.0",
+  "description": "Skills installed into the developer's workspace.",
+  "files": ["skills"]
+}
