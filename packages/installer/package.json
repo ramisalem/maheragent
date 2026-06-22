@@ -7,6 +7,12 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc --build",
-    "dev": "tsc --build --watch"
+    "dev": "tsc --build --watch",
+    "pretest": "tsc --build",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@ramisalem/mcp": "0.1.0",
+    "@ramisalem/skills": "0.1.0"
   }
 }

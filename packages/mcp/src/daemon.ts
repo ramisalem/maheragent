@@ -70,7 +70,9 @@ export function spawnDaemon(timeoutMs = 15_000): Promise<DaemonHandshake> {
       try {
         const handshake = JSON.parse(line) as DaemonHandshake;
         done(() => {
-          // Let the daemon keep running after this process exits.
+          // Release the pipe and detach so this process can exit on its own
+          // while the daemon keeps running (e.g. a short-lived CLI command).
+          child.stdout?.destroy();
           child.unref();
           resolve(handshake);
         });

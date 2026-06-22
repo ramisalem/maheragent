@@ -4,6 +4,7 @@
 // its handshake two ways: to the discovery file (for future adapter processes)
 // and as a single JSON line on stdout (for the parent that spawned it).
 
+import { isFlagEnabled } from "@ramisalem/configuration-core";
 import { startToolServer } from "./index.js";
 import { clearDaemonInfo, writeDaemonInfo } from "./daemon.js";
 
@@ -11,6 +12,8 @@ async function main(): Promise<void> {
   const handle = await startToolServer({
     port: Number(process.env.MAHERAGENT_PORT ?? 0),
     token: process.env.MAHERAGENT_TOKEN,
+    // Gate flagged tools against the live flags files, project over global.
+    isFlagEnabled,
   });
 
   const handshake = { url: handle.url, token: handle.token, pid: process.pid };
