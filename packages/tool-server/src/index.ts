@@ -9,6 +9,7 @@ import { registerCoreTools } from "./tools/index.js";
 
 export { browserSessionBlueprint } from "./blueprints/browser-session.js";
 export type {
+  BoundingBox,
   BrowserSession,
   BrowserSessionInput,
   ClickTarget,
@@ -17,6 +18,12 @@ export type {
   PageState,
   Screenshot,
 } from "./blueprints/browser-session.js";
+export {
+  compareStyles,
+  type ConformanceResult,
+  type StyleComparison,
+  type CompareOptions,
+} from "./conformance.js";
 export { coreTools, registerCoreTools } from "./tools/index.js";
 export { createHttpServer } from "./http.js";
 export {

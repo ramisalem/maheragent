@@ -46,15 +46,22 @@ element using the two screenshots plus `describe` output (match by role, text/
 accessible name, and position). State each pairing so it can be checked.
 
 ### 5. Ground each pairing
-For every paired element, call `extract-styles` `{ "ref": "<ref>" }` and compare
-the returned computed values against the relevant Figma variable. The tool returns
-these resolved CSS properties:
+For every paired element, use **`compare-styles`** `{ "ref": "<ref>", "expected":
+{ ...design values } }`. Pass the Figma values directly (hex colors, px sizes,
+weight names like "Medium") — the tool normalizes units for you (hex↔rgb, px,
+weight names↔numbers) and returns a deterministic per-property pass/fail report
+with `conforms`, `matched`/`total`, and a `comparisons` list. This replaces
+eyeballing the diff.
 
-`color`, `backgroundColor`, `fontFamily`, `fontSize`, `fontWeight`, `lineHeight`,
-`letterSpacing`, `textAlign`, `padding`, `margin`, `borderRadius`,
-`borderTopWidth`, `borderColor`, `width`, `height`, `display`.
+`extract-styles` `{ "ref": "<ref>" }` is still available when you want the raw
+computed values; it returns: `color`, `backgroundColor`, `fontFamily`,
+`fontSize`, `fontWeight`, `lineHeight`, `letterSpacing`, `textAlign`, `padding`,
+`margin`, `borderRadius`, `borderTopWidth`, `borderColor`, `width`, `height`,
+`display`.
 
-**Normalize before comparing** (this is the whole game — see Grounding rules).
+For **layout/position** conformance (spacing, alignment, size), read each
+element's `box` (`{ x, y, width, height }`) from `describe` and compare against
+the Figma node's bounds.
 
 ### 6. Judge → Discrepancies
 Produce a structured **Discrepancy** list. For each one:

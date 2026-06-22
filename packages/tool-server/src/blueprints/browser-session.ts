@@ -12,6 +12,14 @@ export interface BrowserSessionInput {
 }
 
 /** One interactable element the agent can see and act on. */
+/** Viewport-relative bounding box of an element, in CSS pixels. */
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface DescribedElement {
   /** Stable Element Ref for this page state, e.g. `e3`. Target interactions by this. */
   ref: string;
@@ -21,6 +29,8 @@ export interface DescribedElement {
   name: string;
   /** Current value, for form controls. */
   value?: string;
+  /** Viewport-relative bounding box (for layout/position conformance). */
+  box?: BoundingBox;
 }
 
 export interface PageState {
@@ -30,8 +40,10 @@ export interface PageState {
 
 export interface Screenshot {
   format: "png";
-  /** Base64-encoded PNG bytes. */
-  base64: string;
+  /** Base64-encoded PNG bytes (omitted when written to `path`). */
+  base64?: string;
+  /** Filesystem path the PNG was written to, if `path` was requested. */
+  path?: string;
 }
 
 /** Curated computed styles used to ground a Conformance Check. CSS values as the browser resolves them. */
@@ -90,7 +102,7 @@ export interface BrowserSession {
   navigate(url: string): Promise<PageState>;
   /** The interactable elements on the current page, each tagged with an Element Ref. */
   describe(): Promise<DescribedElement[]>;
-  screenshot(opts?: { fullPage?: boolean }): Promise<Screenshot>;
+  screenshot(opts?: { fullPage?: boolean; path?: string }): Promise<Screenshot>;
   click(target: ClickTarget): Promise<void>;
   type(ref: string, text: string, opts?: TypeOptions): Promise<void>;
   hover(ref: string): Promise<void>;
@@ -208,6 +220,13 @@ function describeInPage(): DescribedElement[] {
     const item: DescribedElement = { ref, role: roleFor(el), name: nameFor(el) };
     const value = (el as HTMLInputElement).value;
     if (typeof value === "string" && value) item.value = value.slice(0, 120);
+    const rect = el.getBoundingClientRect();
+    item.box = {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
     out.push(item);
   });
 
@@ -290,8 +309,15 @@ function createSession(
       return page.evaluate(describeInPage);
     },
     async screenshot(opts) {
-      const buffer = await page.screenshot({ fullPage: opts?.fullPage ?? false });
-      return { format: "png", base64: buffer.toString("base64") };
+      const buffer = await page.screenshot({
+        fullPage: opts?.fullPage ?? false,
+        ...(opts?.path ? { path: opts.path } : {}),
+      });
+      // When written to disk, return the path instead of the bytes — far cheaper
+      // for the agent than a base64 blob it then has to decode to view.
+      return opts?.path
+        ? { format: "png", path: opts.path }
+        : { format: "png", base64: buffer.toString("base64") };
     },
     async click(target) {
       if ("ref" in target) {

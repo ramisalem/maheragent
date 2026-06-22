@@ -3,7 +3,7 @@
 //
 //   perception:   navigate, describe, screenshot
 //   interaction:  click, type, hover, scroll, press-key
-//   conformance:  extract-styles   (read-only grounding tool; the verdict lives in the skill)
+//   conformance:  extract-styles, compare-styles   (grounding + deterministic diff)
 //   diagnostics:  get-console-logs, get-network-log
 //
 // Later: performance (Lighthouse / CDP trace).
@@ -16,6 +16,7 @@ import {
   type Registry,
 } from "@ramisalem/registry";
 import { browserSessionBlueprint } from "../blueprints/browser-session.js";
+import { compareStyles } from "../conformance.js";
 
 /** Shared arg: which Browser Session to act on (defaults to a single session). */
 const sessionArg = z.string().optional();
@@ -44,10 +45,15 @@ const describe = defineTool({
 
 const screenshot = defineTool({
   name: "screenshot",
-  description: "Capture a PNG screenshot of the current page (base64-encoded).",
-  input: z.object({ fullPage: z.boolean().default(false), session: sessionArg }),
+  description:
+    "Capture a PNG of the current page. Returns base64 by default, or pass `path` to write the PNG to disk and return the path (cheaper for the agent than decoding base64).",
+  input: z.object({
+    fullPage: z.boolean().default(false),
+    path: z.string().optional(),
+    session: sessionArg,
+  }),
   services: (args) => browserOf(args.session),
-  execute: (args, { browser }) => browser.screenshot({ fullPage: args.fullPage }),
+  execute: (args, { browser }) => browser.screenshot({ fullPage: args.fullPage, path: args.path }),
 });
 
 const click = defineTool({
@@ -135,6 +141,25 @@ const extractStyles = defineTool({
   execute: (args, { browser }) => browser.extractStyles(args.ref),
 });
 
+const compareStylesTool = defineTool({
+  name: "compare-styles",
+  description:
+    "Compare an element's computed styles against expected design values (e.g. Figma variables). Normalizes units (hex<->rgb, px, font-weight names<->numbers) and returns a per-property pass/fail conformance report — the deterministic core of a Conformance Check.",
+  input: z.object({
+    ref: z.string(),
+    expected: z.record(z.string()),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    const actual = await browser.extractStyles(args.ref);
+    if (actual == null) {
+      return { ref: args.ref, conforms: false, error: "stale_ref", comparisons: [] };
+    }
+    return { ref: args.ref, ...compareStyles(args.expected, actual) };
+  },
+});
+
 const getConsoleLogs = defineTool({
   name: "get-console-logs",
   description:
@@ -169,6 +194,7 @@ export const coreTools: AnyToolDefinition[] = [
   scroll,
   pressKey,
   extractStyles,
+  compareStylesTool,
   getConsoleLogs,
   getNetworkLog,
 ];
