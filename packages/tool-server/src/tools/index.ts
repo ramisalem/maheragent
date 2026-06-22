@@ -4,8 +4,9 @@
 //   perception:   navigate, describe, screenshot
 //   interaction:  click, type, hover, scroll, press-key
 //   conformance:  extract-styles   (read-only grounding tool; the verdict lives in the skill)
+//   diagnostics:  get-console-logs, get-network-log
 //
-// Later: diagnostics (console/network), performance (Lighthouse / CDP trace).
+// Later: performance (Lighthouse / CDP trace).
 
 import { z } from "zod";
 import {
@@ -134,6 +135,29 @@ const extractStyles = defineTool({
   execute: (args, { browser }) => browser.extractStyles(args.ref),
 });
 
+const getConsoleLogs = defineTool({
+  name: "get-console-logs",
+  description:
+    "Return console messages and uncaught page errors captured since the session started. Optionally filter by level (e.g. \"error\") and clear the buffer.",
+  input: z.object({
+    level: z.string().optional(),
+    clear: z.boolean().optional(),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) =>
+    browser.getConsoleLogs({ level: args.level, clear: args.clear }),
+});
+
+const getNetworkLog = defineTool({
+  name: "get-network-log",
+  description:
+    "Return network responses and failed requests captured since the session started. Optionally clear the buffer.",
+  input: z.object({ clear: z.boolean().optional(), session: sessionArg }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) => browser.getNetworkLog({ clear: args.clear }),
+});
+
 /** Every tool the tool-server exposes. */
 export const coreTools: AnyToolDefinition[] = [
   navigate,
@@ -145,6 +169,8 @@ export const coreTools: AnyToolDefinition[] = [
   scroll,
   pressKey,
   extractStyles,
+  getConsoleLogs,
+  getNetworkLog,
 ];
 
 /** Register all tools on a Registry. */

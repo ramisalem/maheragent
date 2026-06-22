@@ -52,6 +52,39 @@ export interface ScrollOptions {
   dy?: number;
 }
 
+/** A captured console message or uncaught page error. */
+export interface ConsoleEntry {
+  /** Playwright console type: "log" | "info" | "warning" | "error" | "debug" | … */
+  type: string;
+  text: string;
+  /** Epoch milliseconds when captured. */
+  time: number;
+}
+
+/** A captured network response or failed request. */
+export interface NetworkEntry {
+  method: string;
+  url: string;
+  /** HTTP status, when a response arrived. */
+  status?: number;
+  /** Failure text, for a request that never completed. */
+  failure?: string;
+  /** Epoch milliseconds when captured. */
+  time: number;
+}
+
+export interface ConsoleLogQuery {
+  /** Only return entries of this level (e.g. "error"); "warn" matches "warning". */
+  level?: string;
+  /** Empty the buffer after reading. */
+  clear?: boolean;
+}
+
+export interface NetworkLogQuery {
+  /** Empty the buffer after reading. */
+  clear?: boolean;
+}
+
 /** The live browser the agent drives. One per {@link BrowserSessionInput.sessionId}. */
 export interface BrowserSession {
   navigate(url: string): Promise<PageState>;
@@ -65,6 +98,10 @@ export interface BrowserSession {
   pressKey(key: string): Promise<void>;
   /** Computed styles of the element behind `ref`, or null if the Ref is stale. */
   extractStyles(ref: string): Promise<ComputedStyles | null>;
+  /** Console messages + page errors captured since the session started (ring-buffered). */
+  getConsoleLogs(query?: ConsoleLogQuery): Promise<ConsoleEntry[]>;
+  /** Network responses + failed requests captured since the session started (ring-buffered). */
+  getNetworkLog(query?: NetworkLogQuery): Promise<NetworkEntry[]>;
   /** Close the browser. Called by the blueprint on eviction/shutdown. */
   close(): Promise<void>;
 }
@@ -211,6 +248,39 @@ function createSession(
   context: BrowserContext,
   page: Page,
 ): BrowserSession {
+  // Diagnostics: capture console + network into bounded ring buffers. Listeners
+  // are attached once, before any navigation, so they cover the whole session.
+  const LOG_CAP = 500;
+  const consoleLog: ConsoleEntry[] = [];
+  const networkLog: NetworkEntry[] = [];
+  const push = <T>(buf: T[], entry: T): void => {
+    buf.push(entry);
+    if (buf.length > LOG_CAP) buf.shift();
+  };
+
+  page.on("console", (msg) =>
+    push(consoleLog, { type: msg.type(), text: msg.text(), time: Date.now() }),
+  );
+  page.on("pageerror", (err) =>
+    push(consoleLog, { type: "error", text: err.message, time: Date.now() }),
+  );
+  page.on("response", (res) =>
+    push(networkLog, {
+      method: res.request().method(),
+      url: res.url(),
+      status: res.status(),
+      time: Date.now(),
+    }),
+  );
+  page.on("requestfailed", (req) =>
+    push(networkLog, {
+      method: req.method(),
+      url: req.url(),
+      failure: req.failure()?.errorText ?? "failed",
+      time: Date.now(),
+    }),
+  );
+
   return {
     async navigate(url) {
       await page.goto(url, { waitUntil: "domcontentloaded" });
@@ -254,6 +324,17 @@ function createSession(
     },
     async extractStyles(ref) {
       return page.evaluate(extractStylesInPage, ref);
+    },
+    async getConsoleLogs(query) {
+      const level = query?.level === "warn" ? "warning" : query?.level;
+      const out = level ? consoleLog.filter((e) => e.type === level) : [...consoleLog];
+      if (query?.clear) consoleLog.length = 0;
+      return out;
+    },
+    async getNetworkLog(query) {
+      const out = [...networkLog];
+      if (query?.clear) networkLog.length = 0;
+      return out;
     },
     async close() {
       await context.close();

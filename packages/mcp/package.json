@@ -12,10 +12,27 @@
     "build": "tsc --build",
     "dev": "tsc --build --watch",
     "pretest": "tsc --build",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepack": "tsc --build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@ramisalem/tool-server": "0.1.0"
-  }
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ramisalem/maheragent.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/ramisalem/maheragent#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ]
 }

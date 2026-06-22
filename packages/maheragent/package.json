@@ -3,15 +3,33 @@
   "version": "0.1.0",
   "description": "AI control for your web app, verified against your Figma design.",
   "type": "module",
-  "bin": { "maheragent": "dist/cli.js" },
-  "files": ["dist"],
+  "bin": {
+    "maheragent": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc --build",
-    "dev": "tsc --build --watch"
+    "dev": "tsc --build --watch",
+    "prepack": "tsc --build"
   },
   "dependencies": {
     "@ramisalem/cli": "0.1.0",
     "@ramisalem/installer": "0.1.0",
     "@ramisalem/mcp": "0.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ramisalem/maheragent.git",
+    "directory": "packages/maheragent"
+  },
+  "homepage": "https://github.com/ramisalem/maheragent#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }
