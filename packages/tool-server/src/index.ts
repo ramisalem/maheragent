@@ -19,6 +19,14 @@ export type {
 } from "./blueprints/browser-session.js";
 export { coreTools, registerCoreTools } from "./tools/index.js";
 export { createHttpServer } from "./http.js";
+export {
+  clearDaemonInfo,
+  daemonHome,
+  daemonInfoPath,
+  readDaemonInfo,
+  writeDaemonInfo,
+  type DaemonHandshake,
+} from "./daemon.js";
 
 /** Build a Registry with every tool registered. */
 export function createToolRegistry(options: RegistryOptions = {}): Registry {
