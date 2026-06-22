@@ -34,14 +34,49 @@ export interface Screenshot {
   base64: string;
 }
 
+/** Curated computed styles used to ground a Conformance Check. CSS values as the browser resolves them. */
+export type ComputedStyles = Record<string, string>;
+
+/** What to click: a perceived element by Ref, or raw viewport coordinates (the fallback). */
+export type ClickTarget = { ref: string } | { x: number; y: number };
+
+export interface TypeOptions {
+  /** Replace the field's contents (default) vs. append to them. */
+  clear?: boolean;
+}
+
+export interface ScrollOptions {
+  /** Scroll this element into view; if omitted, scroll the page by (dx, dy). */
+  ref?: string;
+  dx?: number;
+  dy?: number;
+}
+
 /** The live browser the agent drives. One per {@link BrowserSessionInput.sessionId}. */
 export interface BrowserSession {
   navigate(url: string): Promise<PageState>;
   /** The interactable elements on the current page, each tagged with an Element Ref. */
   describe(): Promise<DescribedElement[]>;
   screenshot(opts?: { fullPage?: boolean }): Promise<Screenshot>;
+  click(target: ClickTarget): Promise<void>;
+  type(ref: string, text: string, opts?: TypeOptions): Promise<void>;
+  hover(ref: string): Promise<void>;
+  scroll(opts?: ScrollOptions): Promise<void>;
+  pressKey(key: string): Promise<void>;
+  /** Computed styles of the element behind `ref`, or null if the Ref is stale. */
+  extractStyles(ref: string): Promise<ComputedStyles | null>;
   /** Close the browser. Called by the blueprint on eviction/shutdown. */
   close(): Promise<void>;
+}
+
+const REF_PATTERN = /^e\d+$/;
+
+/** Build the locator selector for an Element Ref, rejecting anything malformed. */
+function refSelector(ref: string): string {
+  if (!REF_PATTERN.test(ref)) {
+    throw new Error(`Invalid Element Ref: ${JSON.stringify(ref)} (expected e.g. "e3")`);
+  }
+  return `[data-maher-ref="${ref}"]`;
 }
 
 /**
@@ -142,6 +177,35 @@ function describeInPage(): DescribedElement[] {
   return out;
 }
 
+/** Runs *in the page*. Returns a curated set of computed styles for an Element Ref. */
+function extractStylesInPage(ref: string): ComputedStyles | null {
+  const el = document.querySelector(`[data-maher-ref="${ref}"]`);
+  if (!el) return null;
+  const style = getComputedStyle(el);
+  const keys = [
+    "color",
+    "backgroundColor",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "lineHeight",
+    "letterSpacing",
+    "textAlign",
+    "padding",
+    "margin",
+    "borderRadius",
+    "borderTopWidth",
+    "borderColor",
+    "width",
+    "height",
+    "display",
+  ];
+  const out: ComputedStyles = {};
+  const indexable = style as unknown as Record<string, string>;
+  for (const key of keys) out[key] = indexable[key];
+  return out;
+}
+
 function createSession(
   browser: Browser,
   context: BrowserContext,
@@ -158,6 +222,38 @@ function createSession(
     async screenshot(opts) {
       const buffer = await page.screenshot({ fullPage: opts?.fullPage ?? false });
       return { format: "png", base64: buffer.toString("base64") };
+    },
+    async click(target) {
+      if ("ref" in target) {
+        await page.locator(refSelector(target.ref)).click();
+      } else {
+        await page.mouse.click(target.x, target.y);
+      }
+    },
+    async type(ref, text, opts) {
+      const locator = page.locator(refSelector(ref));
+      if (opts?.clear ?? true) {
+        await locator.fill(text);
+      } else {
+        await locator.click();
+        await locator.pressSequentially(text);
+      }
+    },
+    async hover(ref) {
+      await page.locator(refSelector(ref)).hover();
+    },
+    async scroll(opts) {
+      if (opts?.ref) {
+        await page.locator(refSelector(opts.ref)).scrollIntoViewIfNeeded();
+      } else {
+        await page.mouse.wheel(opts?.dx ?? 0, opts?.dy ?? 0);
+      }
+    },
+    async pressKey(key) {
+      await page.keyboard.press(key);
+    },
+    async extractStyles(ref) {
+      return page.evaluate(extractStylesInPage, ref);
     },
     async close() {
       await context.close();

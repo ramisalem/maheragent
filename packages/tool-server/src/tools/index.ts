@@ -1,9 +1,11 @@
 // Tool registrations. Each Tool is a named, agent-callable operation with a typed
 // input schema; it declares the Services it needs and the Registry resolves them.
 //
-// Step 1 (this slice): the BrowserSession lifecycle + perception.
-//   navigate, describe, screenshot
-// Later: interaction (click/type/scroll/...), diagnostics, performance, extract-styles.
+//   perception:   navigate, describe, screenshot
+//   interaction:  click, type, hover, scroll, press-key
+//   conformance:  extract-styles   (read-only grounding tool; the verdict lives in the skill)
+//
+// Later: diagnostics (console/network), performance (Lighthouse / CDP trace).
 
 import { z } from "zod";
 import {
@@ -47,10 +49,105 @@ const screenshot = defineTool({
   execute: (args, { browser }) => browser.screenshot({ fullPage: args.fullPage }),
 });
 
-/** Every tool in this slice. */
-export const coreTools: AnyToolDefinition[] = [navigate, describe, screenshot];
+const click = defineTool({
+  name: "click",
+  description:
+    "Click an element by its Element Ref, or fall back to viewport coordinates (x, y).",
+  input: z
+    .object({
+      ref: z.string().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+      session: sessionArg,
+    })
+    .refine((v) => (v.ref != null) !== (v.x != null && v.y != null), {
+      message: "Provide either `ref`, or both `x` and `y` — not both, not neither.",
+    }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.click(args.ref != null ? { ref: args.ref } : { x: args.x!, y: args.y! });
+    return { ok: true };
+  },
+});
 
-/** Register this slice's tools on a Registry. */
+const type = defineTool({
+  name: "type",
+  description: "Type text into a field by Element Ref (replacing its contents by default).",
+  input: z.object({
+    ref: z.string(),
+    text: z.string(),
+    clear: z.boolean().default(true),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.type(args.ref, args.text, { clear: args.clear });
+    return { ok: true };
+  },
+});
+
+const hover = defineTool({
+  name: "hover",
+  description: "Hover the pointer over an element by Element Ref.",
+  input: z.object({ ref: z.string(), session: sessionArg }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.hover(args.ref);
+    return { ok: true };
+  },
+});
+
+const scroll = defineTool({
+  name: "scroll",
+  description:
+    "Scroll an element into view by Element Ref, or scroll the page by (dx, dy) pixels.",
+  input: z.object({
+    ref: z.string().optional(),
+    dx: z.number().default(0),
+    dy: z.number().default(0),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.scroll({ ref: args.ref, dx: args.dx, dy: args.dy });
+    return { ok: true };
+  },
+});
+
+const pressKey = defineTool({
+  name: "press-key",
+  description: 'Press a key (e.g. "Enter", "Escape", "Tab", "ArrowDown").',
+  input: z.object({ key: z.string(), session: sessionArg }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.pressKey(args.key);
+    return { ok: true };
+  },
+});
+
+const extractStyles = defineTool({
+  name: "extract-styles",
+  description:
+    "Read the computed styles of an element by Element Ref — the grounding evidence for a Conformance Check.",
+  input: z.object({ ref: z.string(), session: sessionArg }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) => browser.extractStyles(args.ref),
+});
+
+/** Every tool the tool-server exposes. */
+export const coreTools: AnyToolDefinition[] = [
+  navigate,
+  describe,
+  screenshot,
+  click,
+  type,
+  hover,
+  scroll,
+  pressKey,
+  extractStyles,
+];
+
+/** Register all tools on a Registry. */
 export function registerCoreTools(registry: Registry): void {
   registry.registerTools(coreTools);
 }
