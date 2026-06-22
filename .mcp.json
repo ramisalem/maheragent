@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "maheragent": {
+      "command": "/opt/homebrew/Cellar/node/23.11.0/bin/node",
+      "args": [
+        "/Users/rami/Desktop/folders/maheragent/packages/mcp/dist/bin.js"
+      ]
+    }
+  }
+}
