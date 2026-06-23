@@ -5,8 +5,7 @@
 //   interaction:  click, type, hover, scroll, press-key
 //   conformance:  extract-styles, compare-styles   (grounding + deterministic diff)
 //   diagnostics:  get-console-logs, get-network-log
-//
-// Later: performance (Lighthouse / CDP trace).
+//   performance:  profile-performance   (Core Web Vitals via in-page APIs)
 
 import { z } from "zod";
 import {
@@ -174,6 +173,18 @@ const getConsoleLogs = defineTool({
     browser.getConsoleLogs({ level: args.level, clear: args.clear }),
 });
 
+const profilePerformance = defineTool({
+  name: "profile-performance",
+  description:
+    "Profile the current page's performance — Core Web Vitals (LCP, CLS, FCP), estimated Total Blocking Time, navigation timing, and a resource summary. Navigate to the page first; metrics come from the loaded document's buffered performance entries.",
+  input: z.object({
+    settleMs: z.number().int().min(0).max(10000).optional(),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) => browser.profilePerformance({ settleMs: args.settleMs }),
+});
+
 const getNetworkLog = defineTool({
   name: "get-network-log",
   description:
@@ -197,6 +208,7 @@ export const coreTools: AnyToolDefinition[] = [
   compareStylesTool,
   getConsoleLogs,
   getNetworkLog,
+  profilePerformance,
 ];
 
 /** Register all tools on a Registry. */

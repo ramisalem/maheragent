@@ -97,6 +97,34 @@ export interface NetworkLogQuery {
   clear?: boolean;
 }
 
+/** Core Web Vitals + navigation/resource timing for the current page. */
+export interface PerformanceReport {
+  /** Time to first byte (ms). */
+  ttfb?: number;
+  /** First Contentful Paint (ms). */
+  fcp?: number;
+  /** Largest Contentful Paint (ms). */
+  lcp?: number;
+  /** Cumulative Layout Shift (unitless; good < 0.1). */
+  cls: number;
+  /** DOMContentLoaded, ms from navigation start. */
+  domContentLoaded?: number;
+  /** Load event end, ms from navigation start. */
+  load?: number;
+  /** Estimated Total Blocking Time from long tasks (ms; good < 200). */
+  totalBlockingTime: number;
+  /** Number of long tasks (>50ms). */
+  longTaskCount: number;
+  /** Total number of resources fetched. */
+  resourceCount: number;
+  /** Sum of resource transfer sizes (bytes). */
+  resourceBytes: number;
+  /** Resource counts keyed by initiator type (script, css, img, fetch, …). */
+  resourcesByType: Record<string, number>;
+  /** Document transfer size (bytes). */
+  documentBytes?: number;
+}
+
 /** The live browser the agent drives. One per {@link BrowserSessionInput.sessionId}. */
 export interface BrowserSession {
   navigate(url: string): Promise<PageState>;
@@ -114,6 +142,8 @@ export interface BrowserSession {
   getConsoleLogs(query?: ConsoleLogQuery): Promise<ConsoleEntry[]>;
   /** Network responses + failed requests captured since the session started (ring-buffered). */
   getNetworkLog(query?: NetworkLogQuery): Promise<NetworkEntry[]>;
+  /** Core Web Vitals + timing for the current page (buffered metrics; navigate first). */
+  profilePerformance(opts?: { settleMs?: number }): Promise<PerformanceReport>;
   /** Close the browser. Called by the blueprint on eviction/shutdown. */
   close(): Promise<void>;
 }
@@ -262,6 +292,78 @@ function extractStylesInPage(ref: string): ComputedStyles | null {
   return out;
 }
 
+/**
+ * Runs *in the page*. Collects Core Web Vitals from buffered performance
+ * entries (LCP, CLS, long tasks) plus navigation/paint/resource timing, after a
+ * short settle so observers can replay history. Self-contained — serialized
+ * into the browser. `settleMs` is passed in because closures don't cross.
+ */
+function profilePerformanceInPage(settleMs: number): Promise<PerformanceReport> {
+  return new Promise((resolve) => {
+    const perf = { lcp: 0, cls: 0, longTasks: [] as number[] };
+    const observe = (type: string, cb: (entries: PerformanceEntry[]) => void): void => {
+      try {
+        new PerformanceObserver((list) => cb(list.getEntries())).observe({ type, buffered: true });
+      } catch {
+        /* entry type unsupported in this browser */
+      }
+    };
+    observe("largest-contentful-paint", (es) => {
+      if (es.length) perf.lcp = es[es.length - 1].startTime;
+    });
+    observe("layout-shift", (es) => {
+      for (const e of es as Array<PerformanceEntry & { value: number; hadRecentInput: boolean }>) {
+        if (!e.hadRecentInput) perf.cls += e.value;
+      }
+    });
+    observe("longtask", (es) => {
+      for (const e of es) perf.longTasks.push(e.duration);
+    });
+
+    setTimeout(() => {
+      const nav = performance.getEntriesByType("navigation")[0] as
+        | (PerformanceEntry & {
+            responseStart: number;
+            domContentLoadedEventEnd: number;
+            loadEventEnd: number;
+            transferSize: number;
+          })
+        | undefined;
+      const fcp = (performance.getEntriesByType("paint") as PerformanceEntry[]).find(
+        (p) => p.name === "first-contentful-paint",
+      )?.startTime;
+      const resources = performance.getEntriesByType("resource") as Array<
+        PerformanceEntry & { initiatorType: string; transferSize: number }
+      >;
+      const byType: Record<string, number> = {};
+      let bytes = 0;
+      for (const r of resources) {
+        const t = r.initiatorType || "other";
+        byType[t] = (byType[t] || 0) + 1;
+        bytes += r.transferSize || 0;
+      }
+      const tbt = perf.longTasks.reduce((sum, d) => sum + Math.max(0, d - 50), 0);
+      const round = (n: number | undefined): number | undefined =>
+        typeof n === "number" ? Math.round(n) : undefined;
+
+      resolve({
+        ttfb: round(nav?.responseStart),
+        fcp: round(fcp),
+        lcp: perf.lcp ? Math.round(perf.lcp) : undefined,
+        cls: Math.round(perf.cls * 1000) / 1000,
+        domContentLoaded: round(nav?.domContentLoadedEventEnd),
+        load: round(nav?.loadEventEnd),
+        totalBlockingTime: Math.round(tbt),
+        longTaskCount: perf.longTasks.length,
+        resourceCount: resources.length,
+        resourceBytes: bytes,
+        resourcesByType: byType,
+        documentBytes: nav?.transferSize,
+      });
+    }, settleMs);
+  });
+}
+
 function createSession(
   browser: Browser,
   context: BrowserContext,
@@ -361,6 +463,9 @@ function createSession(
       const out = [...networkLog];
       if (query?.clear) networkLog.length = 0;
       return out;
+    },
+    async profilePerformance(opts) {
+      return page.evaluate(profilePerformanceInPage, opts?.settleMs ?? 300);
     },
     async close() {
       await context.close();

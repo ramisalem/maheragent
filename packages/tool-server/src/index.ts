@@ -16,6 +16,7 @@ export type {
   ComputedStyles,
   DescribedElement,
   PageState,
+  PerformanceReport,
   Screenshot,
 } from "./blueprints/browser-session.js";
 export {
