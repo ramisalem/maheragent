@@ -4,14 +4,23 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { copyDir, removeDirIfEmpty } from "./format.js";
 import type { SkillTarget } from "./adapters.js";
 
 const require = createRequire(import.meta.url);
 
-/** Absolute path to the bundled skills directory. */
+/**
+ * Absolute path to the bundled skills directory. Resolves the skills package in
+ * a workspace/dev install; in the bundled single-package distribution it falls
+ * back to the `skills/` directory shipped beside this file.
+ */
 export function skillsSource(): string {
-  return join(dirname(require.resolve("@ramisalem/skills/package.json")), "skills");
+  try {
+    return join(dirname(require.resolve("@ramisalem/skills/package.json")), "skills");
+  } catch {
+    return fileURLToPath(new URL("./skills", import.meta.url));
+  }
 }
 
 export interface SkillCopyResult {

@@ -8,7 +8,6 @@
     { "path": "packages/tool-server" },
     { "path": "packages/mcp" },
     { "path": "packages/cli" },
-    { "path": "packages/installer" },
-    { "path": "packages/maheragent" }
+    { "path": "packages/installer" }
   ]
 }

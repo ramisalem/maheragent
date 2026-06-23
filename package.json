@@ -3,13 +3,17 @@
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && npm run build -w maheragent",
     "start:tool-server": "npm run build -w @ramisalem/registry && npm run dev -w @ramisalem/tool-server",
     "test": "npm test --workspaces --if-present",
+    "check:versions": "node scripts/check-workspace-versions.mjs",
+    "pack:maheragent": "npm run check:versions && npm run build && npm pack -w maheragent --pack-destination .",
+    "release": "npm run check:versions && npm run build && npm publish -w maheragent",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "esbuild": "^0.24.0",
     "typescript": "^5.6.0"
   }
 }

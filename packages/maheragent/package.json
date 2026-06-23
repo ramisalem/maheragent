@@ -10,14 +10,23 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc --build",
-    "dev": "tsc --build --watch",
-    "prepack": "tsc --build"
+    "build": "node scripts/bundle.cjs",
+    "dev": "node scripts/bundle.cjs",
+    "prepack": "node scripts/bundle.cjs"
   },
   "dependencies": {
-    "@ramisalem/cli": "0.1.0",
-    "@ramisalem/installer": "0.1.0",
-    "@ramisalem/mcp": "0.1.0"
+    "@clack/prompts": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "jsonc-parser": "^3.3.1",
+    "picocolors": "^1.1.1",
+    "playwright": "^1.49.0",
+    "smol-toml": "^1.6.1",
+    "yaml": "^2.9.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
   },
   "license": "MIT",
   "engines": {

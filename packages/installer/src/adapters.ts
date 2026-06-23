@@ -464,8 +464,20 @@ export function detectAdapters(): McpConfigAdapter[] {
   return ALL_ADAPTERS.filter((a) => a.detect());
 }
 
+/** Short aliases so `--editor claude` resolves to "Claude Code", etc. */
+const EDITOR_ALIASES: Record<string, string> = {
+  claude: "claude code",
+  "claude-code": "claude code",
+  claudecode: "claude code",
+  vscode: "vs code",
+  "vs-code": "vs code",
+  code: "vs code",
+};
+
 export function getAdapterByName(name: string): McpConfigAdapter | undefined {
-  return ALL_ADAPTERS.find((a) => a.name.toLowerCase() === name.toLowerCase());
+  const query = name.toLowerCase();
+  const target = EDITOR_ALIASES[query] ?? query;
+  return ALL_ADAPTERS.find((a) => a.name.toLowerCase() === target);
 }
 
 export type AdapterConfigScope = "project" | "global";

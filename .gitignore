@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .maheragent/
+
+# packed tarballs
+*.tgz

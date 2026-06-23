@@ -8,14 +8,23 @@
 
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { readDaemonInfo, type DaemonHandshake } from "@ramisalem/tool-server";
 import { ToolServerClient } from "./client.js";
 
 const require = createRequire(import.meta.url);
 
-/** Resolve the path to the tool-server's standalone entrypoint. */
+/**
+ * Resolve the daemon entrypoint. In a workspace/dev install the tool-server
+ * package is resolvable; in the bundled single-package distribution it isn't,
+ * so fall back to the `daemon.mjs` bundle shipped beside this file.
+ */
 function toolServerBin(): string {
-  return require.resolve("@ramisalem/tool-server/dist/bin.js");
+  try {
+    return require.resolve("@ramisalem/tool-server/dist/bin.js");
+  } catch {
+    return fileURLToPath(new URL("./daemon.mjs", import.meta.url));
+  }
 }
 
 /** Return a client for a live daemon, reusing one if already running. */

@@ -37,6 +37,12 @@ test("all 9 editor adapters are registered and findable by name", () => {
   }
 });
 
+test("short editor aliases resolve (claude → Claude Code, vscode → VS Code)", () => {
+  assert.equal(getAdapterByName("claude")?.name, "Claude Code");
+  assert.equal(getAdapterByName("vscode")?.name, "VS Code");
+  assert.equal(getAdapterByName("nope"), undefined);
+});
+
 test("Claude adapter writes JSON with type:stdio and preserves other servers", () => {
   const adapter = getAdapterByName("claude code");
   const p = join(root, ".mcp.json");
