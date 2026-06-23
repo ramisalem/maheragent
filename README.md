@@ -43,7 +43,7 @@ See [`CONTEXT.md`](CONTEXT.md) for the domain glossary.
 ## Install
 
 ```bash
-npm install -g @ramisalem/maheragent     # pulls Chromium via Playwright on install
+npm install -g maheragent     # pulls Chromium via Playwright on install
 ```
 
 Then, **from the web app you want the agent to drive**:
