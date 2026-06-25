@@ -1,6 +1,6 @@
 {
   "name": "@ramisalem/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI subcommands (run, tools, server, enable, flags)",
   "type": "module",
   "main": "dist/index.js",
@@ -13,9 +13,9 @@
     "prepack": "tsc --build"
   },
   "dependencies": {
-    "@ramisalem/configuration-core": "0.1.0",
-    "@ramisalem/mcp": "0.1.0",
-    "@ramisalem/tool-server": "0.1.0"
+    "@ramisalem/configuration-core": "0.1.1",
+    "@ramisalem/mcp": "0.1.1",
+    "@ramisalem/tool-server": "0.1.1"
   },
   "license": "MIT",
   "engines": {

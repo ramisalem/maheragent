@@ -1,6 +1,6 @@
 {
   "name": "@ramisalem/tool-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Long-running daemon: registry + BrowserSession + tools",
   "type": "module",
   "main": "dist/index.js",
@@ -16,8 +16,8 @@
     "prepack": "tsc --build"
   },
   "dependencies": {
-    "@ramisalem/configuration-core": "0.1.0",
-    "@ramisalem/registry": "0.1.0",
+    "@ramisalem/configuration-core": "0.1.1",
+    "@ramisalem/registry": "0.1.1",
     "playwright": "^1.49.0",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.5"

@@ -8,7 +8,7 @@ export { ToolServerClient, ToolCallError, type RemoteTool } from "./client.js";
 export { ensureToolServer, spawnDaemon } from "./daemon.js";
 export { createMcpServer, connectStdio, type McpServerInfo } from "./server.js";
 
-const DEFAULT_INFO: McpServerInfo = { name: "maheragent", version: "0.1.0" };
+const DEFAULT_INFO: McpServerInfo = { name: "maheragent", version: "0.1.1" };
 
 /**
  * Start the MCP adapter: ensure a daemon is up, then serve MCP over stdio.

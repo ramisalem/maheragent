@@ -1,6 +1,6 @@
 {
   "name": "maheragent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI control for your web app, verified against your Figma design.",
   "type": "module",
   "bin": {

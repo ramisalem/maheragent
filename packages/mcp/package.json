@@ -1,6 +1,6 @@
 {
   "name": "@ramisalem/mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP adapter that forwards tool calls to the tool-server",
   "type": "module",
   "main": "dist/index.js",
@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@ramisalem/tool-server": "0.1.0"
+    "@ramisalem/tool-server": "0.1.1"
   },
   "license": "MIT",
   "engines": {

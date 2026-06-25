@@ -1,6 +1,6 @@
 {
   "name": "@ramisalem/installer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Workspace install + editor MCP registration",
   "type": "module",
   "main": "dist/index.js",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@ramisalem/skills": "0.1.0",
+    "@ramisalem/skills": "0.1.1",
     "jsonc-parser": "^3.3.1",
     "picocolors": "^1.1.1",
     "smol-toml": "^1.6.1",

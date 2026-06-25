@@ -19,7 +19,7 @@ before(async () => {
   toolServer = await startToolServer();
 
   const tsClient = new ToolServerClient(toolServer.url, toolServer.token);
-  mcp = createMcpServer(tsClient, { name: "maheragent", version: "0.1.0" });
+  mcp = createMcpServer(tsClient, { name: "maheragent", version: "0.1.1" });
 
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await mcp.connect(serverT);
