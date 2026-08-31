@@ -50,7 +50,20 @@ export interface Screenshot {
 export type ComputedStyles = Record<string, string>;
 
 /** What to click: a perceived element by Ref, or raw viewport coordinates (the fallback). */
-export type ClickTarget = { ref: string } | { x: number; y: number };
+export type ClickTarget =
+  | {
+      ref: string;
+      /**
+       * "native" (default) drives a real pointer sequence. "js" dispatches
+       * `el.click()` on the resolved element instead — for elements a native
+       * click focuses but never activates, which happens when a framework
+       * re-renders the node between mousedown and mouseup (virtualized data
+       * grids are the classic case): the browser composes no click event
+       * because the two halves landed on different nodes.
+       */
+      mode?: "native" | "js";
+    }
+  | { x: number; y: number };
 
 export interface TypeOptions {
   /** Replace the field's contents (default) vs. append to them. */
@@ -81,6 +94,13 @@ export interface NetworkEntry {
   status?: number;
   /** Failure text, for a request that never completed. */
   failure?: string;
+  /**
+   * Response body for error statuses, truncated to ERROR_BODY_CAP. Only
+   * captured for status >= 400: a 500's body is the whole reason you are
+   * reading the log, while capturing every 200 would cost far more than it
+   * tells you. Absent when the body could not be read (redirects, no body).
+   */
+  errorBody?: string;
   /** Epoch milliseconds when captured. */
   time: number;
 }
@@ -93,6 +113,17 @@ export interface ConsoleLogQuery {
 }
 
 export interface NetworkLogQuery {
+  /**
+   * Only return entries whose URL contains this substring (case-insensitive).
+   * A page load is mostly static assets, so an unfiltered log is dominated by
+   * noise — filter to the endpoint you actually care about.
+   */
+  urlPattern?: string;
+  /**
+   * Only return entries with status >= this, plus every failed request. Pass
+   * 400 to get just the errors.
+   */
+  minStatus?: number;
   /** Empty the buffer after reading. */
   clear?: boolean;
 }
@@ -136,8 +167,19 @@ export interface BrowserSession {
   hover(ref: string): Promise<void>;
   scroll(opts?: ScrollOptions): Promise<void>;
   pressKey(key: string): Promise<void>;
-  /** Computed styles of the element behind `ref`, or null if the Ref is stale. */
-  extractStyles(ref: string): Promise<ComputedStyles | null>;
+  /**
+   * Computed styles of the element behind `ref`, or null if the Ref is stale
+   * (or `closest` matches no ancestor).
+   *
+   * `properties` adds to the curated set — pass anything a check asserts so it
+   * is actually measured rather than coming back absent. `closest` retargets
+   * to the nearest matching ancestor, for libraries that put the ARIA role on
+   * a different node than the styles.
+   */
+  extractStyles(
+    ref: string,
+    opts?: { properties?: string[]; closest?: string },
+  ): Promise<ComputedStyles | null>;
   /** Console messages + page errors captured since the session started (ring-buffered). */
   getConsoleLogs(query?: ConsoleLogQuery): Promise<ConsoleEntry[]>;
   /** Network responses + failed requests captured since the session started (ring-buffered). */
@@ -263,9 +305,33 @@ function describeInPage(): DescribedElement[] {
   return out;
 }
 
-/** Runs *in the page*. Returns a curated set of computed styles for an Element Ref. */
-function extractStylesInPage(ref: string): ComputedStyles | null {
-  const el = document.querySelector(`[data-maher-ref="${ref}"]`);
+/**
+ * Runs *in the page*. Returns a curated set of computed styles for an Element
+ * Ref, plus any extra properties the caller asked for.
+ *
+ * `extra` exists because the curated set can never cover every design token a
+ * Conformance Check might assert. Without it, asking for a property outside the
+ * list came back `undefined`, which compare-styles reported as a *mismatch* —
+ * a false negative that looks identical to a genuine design regression.
+ *
+ * Names may be camelCase (`borderBottomColor`) or the CSS spelling
+ * (`border-bottom-color`); custom properties (`--brand`) work too.
+ *
+ * `closest` measures the nearest ancestor matching a CSS selector instead of
+ * the Ref itself. Component libraries routinely put the ARIA role on an inner
+ * node while the styles live on the wrapper — MUI marks `role="tablist"` on
+ * `.MuiTabs-flexContainer` but applies `sx` to `.MuiTabs-root` — so measuring
+ * the Ref alone silently reads an unstyled element and reports 0px borders.
+ */
+function extractStylesInPage(args: {
+  ref: string;
+  extra: string[];
+  closest?: string;
+}): ComputedStyles | null {
+  const { ref, extra, closest } = args;
+  const found = document.querySelector(`[data-maher-ref="${ref}"]`);
+  if (!found) return null;
+  const el = closest ? found.closest(closest) : found;
   if (!el) return null;
   const style = getComputedStyle(el);
   const keys = [
@@ -280,15 +346,54 @@ function extractStylesInPage(ref: string): ComputedStyles | null {
     "padding",
     "margin",
     "borderRadius",
-    "borderTopWidth",
-    "borderColor",
     "width",
     "height",
     "display",
+    // Per-side border values: underlines and dividers (tab bars, table rules,
+    // focus rings) are set with `border-bottom`, and the `borderColor` /
+    // `borderTopWidth` shorthands read the *unset* edges on those elements.
+    "borderWidth",
+    "borderStyle",
+    "borderColor",
+    "borderTopWidth",
+    "borderTopColor",
+    "borderBottomWidth",
+    "borderBottomColor",
+    "borderBottomStyle",
+    "borderLeftWidth",
+    "borderLeftColor",
+    "borderRightWidth",
+    "borderRightColor",
   ];
+
+  const toCamel = (name: string): string =>
+    name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+
   const out: ComputedStyles = {};
   const indexable = style as unknown as Record<string, string>;
-  for (const key of keys) out[key] = indexable[key];
+  const read = (name: string): string | undefined => {
+    // Custom properties are only reachable through getPropertyValue.
+    if (name.startsWith("--")) {
+      const custom = style.getPropertyValue(name).trim();
+      return custom === "" ? undefined : custom;
+    }
+    const camel = toCamel(name);
+    const direct = indexable[camel];
+    if (direct != null && direct !== "") return direct;
+    const viaCss = style.getPropertyValue(name).trim();
+    return viaCss === "" ? undefined : viaCss;
+  };
+
+  for (const key of keys) {
+    const value = read(key);
+    if (value !== undefined) out[key] = value;
+  }
+  // Requested keys are echoed under the exact name the caller used, so
+  // compare-styles can look them up without re-normalizing.
+  for (const key of extra) {
+    const value = read(key);
+    if (value !== undefined) out[key] = value;
+  }
   return out;
 }
 
@@ -372,6 +477,7 @@ function createSession(
   // Diagnostics: capture console + network into bounded ring buffers. Listeners
   // are attached once, before any navigation, so they cover the whole session.
   const LOG_CAP = 500;
+  const ERROR_BODY_CAP = 2000;
   const consoleLog: ConsoleEntry[] = [];
   const networkLog: NetworkEntry[] = [];
   const push = <T>(buf: T[], entry: T): void => {
@@ -385,14 +491,28 @@ function createSession(
   page.on("pageerror", (err) =>
     push(consoleLog, { type: "error", text: err.message, time: Date.now() }),
   );
-  page.on("response", (res) =>
-    push(networkLog, {
+  page.on("response", (res) => {
+    const entry: NetworkEntry = {
       method: res.request().method(),
       url: res.url(),
       status: res.status(),
       time: Date.now(),
-    }),
-  );
+    };
+    push(networkLog, entry);
+    // Reading the body is async, so the entry is buffered first and its body
+    // filled in when it arrives. The buffer holds the object by reference, so
+    // a later read sees the body; if the entry was already evicted the write
+    // is harmless. Never let a rejection reach the listener — a body that
+    // cannot be read is normal (redirects, empty responses).
+    if (res.status() >= 400) {
+      void res
+        .text()
+        .then((body) => {
+          if (body) entry.errorBody = body.slice(0, ERROR_BODY_CAP);
+        })
+        .catch(() => undefined);
+    }
+  });
   page.on("requestfailed", (req) =>
     push(networkLog, {
       method: req.method(),
@@ -423,7 +543,14 @@ function createSession(
     },
     async click(target) {
       if ("ref" in target) {
-        await page.locator(refSelector(target.ref)).click();
+        const locator = page.locator(refSelector(target.ref));
+        if (target.mode === "js") {
+          // Programmatic activation on the current node — immune to the
+          // mousedown/mouseup re-render race described on ClickTarget.
+          await locator.evaluate((el) => (el as HTMLElement).click());
+        } else {
+          await locator.click();
+        }
       } else {
         await page.mouse.click(target.x, target.y);
       }
@@ -450,8 +577,14 @@ function createSession(
     async pressKey(key) {
       await page.keyboard.press(key);
     },
-    async extractStyles(ref) {
-      return page.evaluate(extractStylesInPage, ref);
+    async extractStyles(ref, opts) {
+      // The function is serialized into the page, so it cannot close over
+      // anything — every input travels as its single argument.
+      return page.evaluate(extractStylesInPage, {
+        ref,
+        extra: opts?.properties ?? [],
+        closest: opts?.closest,
+      });
     },
     async getConsoleLogs(query) {
       const level = query?.level === "warn" ? "warning" : query?.level;
@@ -460,7 +593,17 @@ function createSession(
       return out;
     },
     async getNetworkLog(query) {
-      const out = [...networkLog];
+      const needle = query?.urlPattern?.toLowerCase();
+      const minStatus = query?.minStatus;
+      const out = networkLog.filter((e) => {
+        if (needle && !e.url.toLowerCase().includes(needle)) return false;
+        // A failed request has no status but is always an error, so it must
+        // survive a minStatus filter rather than be dropped for lacking one.
+        if (minStatus !== undefined && e.failure === undefined) {
+          if (e.status === undefined || e.status < minStatus) return false;
+        }
+        return true;
+      });
       if (query?.clear) networkLog.length = 0;
       return out;
     },

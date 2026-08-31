@@ -61,3 +61,32 @@ test("a missing computed property is a non-match, not a crash", () => {
   assert.equal(r.conforms, false);
   assert.equal(r.comparisons[0].actual, null);
 });
+
+test("normalization is driven by value shape, not by property name", () => {
+  // Regression: color and length handling used to be gated on hardcoded lists
+  // of property names, so any property outside them fell through to string
+  // equality — reporting an exact match as a design discrepancy. #e0e1e6 and
+  // rgb(224, 225, 230) are the same color.
+  assert.equal(
+    compareStyles(
+      { borderBottomColor: "#e0e1e6" },
+      { borderBottomColor: "rgb(224, 225, 230)" },
+    ).conforms,
+    true,
+  );
+  assert.equal(compareStyles({ outlineOffset: "2" }, { outlineOffset: "2px" }).conforms, true);
+  assert.equal(
+    compareStyles({ borderBottomWidth: "2px" }, { borderBottomWidth: "4px" }).conforms,
+    false,
+  );
+
+  // Keywords must not be coerced into colors or lengths.
+  assert.equal(
+    compareStyles({ borderBottomStyle: "solid" }, { borderBottomStyle: "solid" }).conforms,
+    true,
+  );
+  assert.equal(
+    compareStyles({ borderBottomStyle: "solid" }, { borderBottomStyle: "dashed" }).conforms,
+    false,
+  );
+});

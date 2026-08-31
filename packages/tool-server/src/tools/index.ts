@@ -58,20 +58,26 @@ const screenshot = defineTool({
 const click = defineTool({
   name: "click",
   description:
-    "Click an element by its Element Ref, or fall back to viewport coordinates (x, y).",
+    'Click an element by its Element Ref, or fall back to viewport coordinates (x, y). If a click visibly focuses the element but its handler never fires (typical inside virtualized data grids, whose cells re-render between mousedown and mouseup), retry with `mode: "js"` — it dispatches el.click() programmatically and is immune to that race. Signature of the race: the element gains a focus ring, yet nothing navigates/opens.',
   input: z
     .object({
       ref: z.string().optional(),
+      mode: z.enum(["native", "js"]).optional(),
       x: z.number().optional(),
       y: z.number().optional(),
       session: sessionArg,
     })
     .refine((v) => (v.ref != null) !== (v.x != null && v.y != null), {
       message: "Provide either `ref`, or both `x` and `y` — not both, not neither.",
+    })
+    .refine((v) => v.mode == null || v.ref != null, {
+      message: "`mode` only applies to ref clicks.",
     }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
-    await browser.click(args.ref != null ? { ref: args.ref } : { x: args.x!, y: args.y! });
+    await browser.click(
+      args.ref != null ? { ref: args.ref, mode: args.mode } : { x: args.x!, y: args.y! },
+    );
     return { ok: true };
   },
 });
@@ -134,24 +140,40 @@ const pressKey = defineTool({
 const extractStyles = defineTool({
   name: "extract-styles",
   description:
-    "Read the computed styles of an element by Element Ref — the grounding evidence for a Conformance Check.",
-  input: z.object({ ref: z.string(), session: sessionArg }),
+    "Read the computed styles of an element by Element Ref — the grounding evidence for a Conformance Check. Returns a curated set (colors, typography, box, per-side borders); pass `properties` to add any other CSS property, e.g. [\"outlineColor\", \"gap\", \"--brand\"]. Names may be camelCase or CSS spelling.",
+  input: z.object({
+    ref: z.string(),
+    properties: z.array(z.string()).optional(),
+    closest: z.string().optional(),
+    session: sessionArg,
+  }),
   services: (args) => browserOf(args.session),
-  execute: (args, { browser }) => browser.extractStyles(args.ref),
+  execute: (args, { browser }) =>
+    browser.extractStyles(args.ref, {
+      properties: args.properties,
+      closest: args.closest,
+    }),
 });
 
 const compareStylesTool = defineTool({
   name: "compare-styles",
   description:
-    "Compare an element's computed styles against expected design values (e.g. Figma variables). Normalizes units (hex<->rgb, px, font-weight names<->numbers) and returns a per-property pass/fail conformance report — the deterministic core of a Conformance Check.",
+    "Compare an element's computed styles against expected design values (e.g. Figma variables). Normalizes units (hex<->rgb, px, font-weight names<->numbers) and returns a per-property pass/fail conformance report — the deterministic core of a Conformance Check. Every property in `expected` is measured, whatever it is. If a result looks wrong (0px borders, inherited colors), the Ref is probably an inner ARIA node rather than the styled wrapper — re-run with `closest`, e.g. \".MuiTabs-root\".",
   input: z.object({
     ref: z.string(),
     expected: z.record(z.string()),
+    closest: z.string().optional(),
     session: sessionArg,
   }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
-    const actual = await browser.extractStyles(args.ref);
+    // Measure exactly what the caller asserts. Without this, a property outside
+    // the curated set read as absent and was reported as a mismatch — a false
+    // failure indistinguishable from a real design regression.
+    const actual = await browser.extractStyles(args.ref, {
+      properties: Object.keys(args.expected),
+      closest: args.closest,
+    });
     if (actual == null) {
       return { ref: args.ref, conforms: false, error: "stale_ref", comparisons: [] };
     }
@@ -188,10 +210,20 @@ const profilePerformance = defineTool({
 const getNetworkLog = defineTool({
   name: "get-network-log",
   description:
-    "Return network responses and failed requests captured since the session started. Optionally clear the buffer.",
-  input: z.object({ clear: z.boolean().optional(), session: sessionArg }),
+    'Return network responses and failed requests captured since the session started. A full page load is mostly static assets, so FILTER: `urlPattern` keeps only URLs containing a substring (case-insensitive), `minStatus` keeps only statuses >= it plus every failed request — `{minStatus: 400}` gives just the errors. Entries with status >= 400 carry `errorBody`, the response body (truncated), which is what tells you why a request failed. Optionally clear the buffer.',
+  input: z.object({
+    urlPattern: z.string().optional(),
+    minStatus: z.number().int().min(100).max(599).optional(),
+    clear: z.boolean().optional(),
+    session: sessionArg,
+  }),
   services: (args) => browserOf(args.session),
-  execute: (args, { browser }) => browser.getNetworkLog({ clear: args.clear }),
+  execute: (args, { browser }) =>
+    browser.getNetworkLog({
+      urlPattern: args.urlPattern,
+      minStatus: args.minStatus,
+      clear: args.clear,
+    }),
 });
 
 /** Every tool the tool-server exposes. */
