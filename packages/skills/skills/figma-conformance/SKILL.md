@@ -16,7 +16,9 @@ the page's computed styles versus the frame's design variables. Conformance is
 Two MCP servers must be connected — confirm both before starting:
 
 - **Figma MCP** — provides the design: `get_design_context`, `get_screenshot`,
-  `get_variable_defs` for a frame.
+  `get_variable_defs` for a frame. The installer registers the **Figma Dev Mode**
+  server (`figma-dev-mode`) automatically; it only responds while the **Figma
+  desktop app is running with Dev Mode MCP enabled**, so make sure that's open.
 - **maheragent** — drives the page: `navigate`, `describe`, `screenshot`,
   `extract-styles`.
 
@@ -53,11 +55,26 @@ weight names↔numbers) and returns a deterministic per-property pass/fail repor
 with `conforms`, `matched`/`total`, and a `comparisons` list. This replaces
 eyeballing the diff.
 
+`compare-styles` measures **every** property you put in `expected`, so you are
+never limited to a fixed list — assert whatever the design specifies.
+
 `extract-styles` `{ "ref": "<ref>" }` is still available when you want the raw
-computed values; it returns: `color`, `backgroundColor`, `fontFamily`,
+computed values. By default it returns `color`, `backgroundColor`, `fontFamily`,
 `fontSize`, `fontWeight`, `lineHeight`, `letterSpacing`, `textAlign`, `padding`,
-`margin`, `borderRadius`, `borderTopWidth`, `borderColor`, `width`, `height`,
-`display`.
+`margin`, `borderRadius`, `width`, `height`, `display`, plus the per-side border
+values (`borderBottomWidth`, `borderBottomColor`, …). Add anything else with
+`properties`, e.g. `{ "ref": "e9", "properties": ["gap", "outlineColor", "--brand"] }`
+— names may be camelCase or CSS spelling, and custom properties work.
+
+> **If a measurement looks impossible — a 0px border on an element that clearly
+> has an underline, or a color you never set — the Ref is probably not the
+> styled node.** Component libraries put the ARIA role on an inner element while
+> the styles sit on a wrapper: MUI marks `role="tablist"` on
+> `.MuiTabs-flexContainer` but applies `sx` to `.MuiTabs-root`. Re-run with
+> `closest` to retarget: `{ "ref": "e9", "closest": ".MuiTabs-root", "expected": {…} }`.
+> Both tools accept it, and a selector that matches no ancestor returns
+> `stale_ref` rather than a wrong number. Do this **before** filing a
+> Discrepancy — otherwise you report a design bug that does not exist.
 
 For **layout/position** conformance (spacing, alignment, size), read each
 element's `box` (`{ x, y, width, height }`) from `describe` and compare against
