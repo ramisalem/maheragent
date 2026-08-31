@@ -11,10 +11,12 @@ import {
   detectAdapters,
   getAdapterByName,
   getMcpEntry,
+  getFigmaEntry,
   getSkillTargets,
   type AllowlistScope,
   type McpConfigAdapter,
 } from "./adapters.js";
+import { FIGMA_SERVER_KEY } from "./constants.js";
 import { copySkillsToTargets } from "./skills.js";
 
 export interface InitOptions {
@@ -128,7 +130,10 @@ export async function init(argv: string[]): Promise<void> {
   const { scope, root } = scoped;
 
   // ── MCP registration ──────────────────────────────────────────────────────
+  // Register maheragent plus the Figma Dev Mode server (bridged via mcp-remote),
+  // so the figma-conformance skill has both servers it needs out of the box.
   const entry = getMcpEntry();
+  const figmaEntry = getFigmaEntry();
   const mcpLines: string[] = [];
   for (const adapter of adapters) {
     const configPath = configPathFor(adapter, scope, root);
@@ -138,7 +143,10 @@ export async function init(argv: string[]): Promise<void> {
     }
     try {
       adapter.write(configPath, entry);
-      mcpLines.push(`${pc.green("+")} ${adapter.name} ${pc.dim(configPath)}`);
+      adapter.write(configPath, figmaEntry, FIGMA_SERVER_KEY);
+      mcpLines.push(
+        `${pc.green("+")} ${adapter.name} ${pc.dim(configPath)} ${pc.dim("(+ Figma Dev Mode)")}`,
+      );
     } catch (err) {
       mcpLines.push(`${pc.red("x")} ${adapter.name}: ${pc.dim(String(err))}`);
     }

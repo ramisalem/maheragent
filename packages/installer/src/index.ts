@@ -11,6 +11,8 @@ export {
   MCP_BINARY_NAME,
   PERMISSION_RULE,
   CURSOR_ALLOWLIST_PATTERN,
+  FIGMA_SERVER_KEY,
+  FIGMA_MCP_URL,
 } from "./constants.js";
 export { skillsSource, copySkillsToTargets, removeSkillsFromTargets } from "./skills.js";
 export { init } from "./init.js";

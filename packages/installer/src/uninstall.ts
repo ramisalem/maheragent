@@ -13,6 +13,7 @@ import {
 } from "./adapters.js";
 import { removeSkillsFromTargets } from "./skills.js";
 import { parseInitArgs } from "./init.js";
+import { FIGMA_SERVER_KEY } from "./constants.js";
 
 export async function uninstall(argv: string[]): Promise<void> {
   const { opts } = parseInitArgs(argv);
@@ -37,6 +38,7 @@ export async function uninstall(argv: string[]): Promise<void> {
   for (const { adapter, scope, configPath } of configured) {
     try {
       const removed = adapter.remove(configPath);
+      adapter.remove(configPath, FIGMA_SERVER_KEY); // drop the companion Figma entry too
       adapter.removeAllowlist?.(root, scope === "global" ? "global" : "local");
       if (removed) lines.push(`${pc.green("-")} ${adapter.name} ${pc.dim(configPath)}`);
     } catch (err) {
