@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mkdtempSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -75,4 +76,21 @@ test("MCP CallTool passes a page view through as text", async () => {
   const view = JSON.parse(res.content[0].text);
   assert.equal(view.title, "Home");
   assert.ok(Array.isArray(view.elements));
+});
+
+test("MCP CallTool lifts a nested diff image into an image block", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "maher-mcp-diff-"));
+  const baseline = join(dir, "home.png");
+  await client.callTool({ name: "screenshot-diff", arguments: { baseline, updateBaseline: true } });
+  await client.callTool({ name: "evaluate", arguments: { expression: "document.body.style.background = 'red'" } });
+  const res = await client.callTool({ name: "screenshot-diff", arguments: { baseline } });
+  assert.ok(!res.isError);
+  const text = res.content.find((c) => c.type === "text");
+  const payload = JSON.parse(text.text);
+  assert.equal(payload.matches, false);
+  assert.equal(payload.diff.base64, undefined, "base64 stripped from the text");
+  assert.ok(payload.diff.path.endsWith("home.diff.png"));
+  const image = res.content.find((c) => c.type === "image");
+  assert.equal(image?.mimeType, "image/png");
+  rmSync(dir, { recursive: true, force: true });
 });

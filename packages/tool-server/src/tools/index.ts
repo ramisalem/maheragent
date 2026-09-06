@@ -3,7 +3,7 @@
 //
 //   perception:   navigate, describe, find, wait-for, screenshot, set-viewport
 //   interaction:  click, type, hover, scroll, drag, press-key, select-option, upload-file
-//   conformance:  extract-styles, compare-styles
+//   conformance:  extract-styles, compare-styles, screenshot-diff
 //   state:        evaluate, cookies, storage, tabs
 //   diagnostics:  get-console-logs, get-network-log
 //   performance:  profile-performance   (Core Web Vitals via in-page APIs)
@@ -27,6 +27,7 @@ import {
 } from "../blueprints/browser-session.js";
 import { compareStyles } from "../conformance.js";
 import { resolveSecrets } from "../secrets.js";
+import { screenshotDiff } from "../screenshot-diff.js";
 
 /** Flag that turns off the element list appended to every action's result. */
 export const AUTO_DESCRIBE_FLAG = "disable-auto-describe";
@@ -354,6 +355,26 @@ const compareStylesTool = defineTool({
   },
 });
 
+const screenshotDiffTool = defineTool({
+  name: "screenshot-diff",
+  description:
+    "Visual regression: compare a `baseline` PNG against the live page (default), one element (`ref`), or a saved `current` PNG. Returns `matches`, the `mismatchRatio`, and the changed `regions` — each with the elements it overlaps, so you can name what moved — plus a diff image with the changes in red. No baseline yet? Pass `updateBaseline: true` to adopt the current capture (it also replaces a baseline after a mismatch). `maxMismatch` (fraction, default 0) tolerates small noise; `threshold` (0..1, default 0.1) is the per-pixel color sensitivity. Naming the overlapped elements re-describes the page, so use the Refs this result returns.",
+  input: z.object({
+    baseline: z.string(),
+    current: z.string().optional(),
+    ref: z.string().optional(),
+    fullPage: z.boolean().optional(),
+    threshold: z.number().min(0).max(1).optional(),
+    maxMismatch: z.number().min(0).max(1).optional(),
+    updateBaseline: z.boolean().optional(),
+    outputDir: z.string().optional(),
+    includeImage: z.boolean().optional(),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) => screenshotDiff(browser, args),
+});
+
 // ── Page state ──────────────────────────────────────────────────────────────
 
 const evaluate = defineTool({
@@ -546,6 +567,7 @@ export const coreTools: AnyToolDefinition[] = [
   uploadFile,
   extractStyles,
   compareStylesTool,
+  screenshotDiffTool,
   evaluate,
   cookies,
   storage,

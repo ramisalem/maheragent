@@ -52,6 +52,8 @@ export {
   type SecretOptions,
 } from "./secrets.js";
 export { coreTools, registerCoreTools, AUTO_DESCRIBE_FLAG } from "./tools/index.js";
+export { diffPngs, type DiffOptions, type DiffRegion, type DiffResult } from "./visual-diff.js";
+export { screenshotDiff, type ScreenshotDiffArgs, type ScreenshotDiffResult } from "./screenshot-diff.js";
 export { createHttpServer } from "./http.js";
 export {
   clearDaemonInfo,
