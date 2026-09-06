@@ -1,6 +1,6 @@
 {
   "name": "@ramisalem/configuration-core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Feature flags storage (global + project scope)",
   "type": "module",
   "main": "dist/index.js",

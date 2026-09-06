@@ -9,7 +9,7 @@ export { ensureToolServer, spawnDaemon } from "./daemon.js";
 export { createMcpServer, connectStdio, type McpServerInfo } from "./server.js";
 export { toContent, type ContentBlock } from "./content.js";
 
-const DEFAULT_INFO: McpServerInfo = { name: "maheragent", version: "0.1.1" };
+const DEFAULT_INFO: McpServerInfo = { name: "maheragent", version: "0.2.0" };
 
 /**
  * Start the MCP adapter: ensure a daemon is up, then serve MCP over stdio.
