@@ -7,6 +7,7 @@ import { connectStdio, createMcpServer, type McpServerInfo } from "./server.js";
 export { ToolServerClient, ToolCallError, type RemoteTool } from "./client.js";
 export { ensureToolServer, spawnDaemon } from "./daemon.js";
 export { createMcpServer, connectStdio, type McpServerInfo } from "./server.js";
+export { toContent, type ContentBlock } from "./content.js";
 
 const DEFAULT_INFO: McpServerInfo = { name: "maheragent", version: "0.1.1" };
 

@@ -57,3 +57,15 @@ test("MCP CallTool reports a tool failure as an error result", async () => {
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /invalid_args/);
 });
+
+test("MCP CallTool delivers a screenshot as an image block, not base64 text", async () => {
+  const res = await client.callTool({ name: "screenshot", arguments: {} });
+  assert.ok(!res.isError);
+  const image = res.content.find((c) => c.type === "image");
+  assert.ok(image, "an image block is present");
+  assert.equal(image.mimeType, "image/png");
+  assert.ok(image.data.startsWith("iVBORw0KGgo"), "PNG bytes");
+  for (const c of res.content) {
+    if (c.type === "text") assert.ok(!c.text.includes("iVBORw0KGgo"), "no base64 in text blocks");
+  }
+});
