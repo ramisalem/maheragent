@@ -2,8 +2,9 @@
 // input schema; it declares the Services it needs and the Registry resolves them.
 //
 //   perception:   navigate, describe, find, wait-for, screenshot, set-viewport
-//   interaction:  click, type, hover, scroll, press-key
+//   interaction:  click, type, hover, scroll, drag, press-key, select-option, upload-file
 //   conformance:  extract-styles, compare-styles
+//   state:        evaluate, cookies, storage, tabs
 //   diagnostics:  get-console-logs, get-network-log
 //   performance:  profile-performance   (Core Web Vitals via in-page APIs)
 //
@@ -25,6 +26,7 @@ import {
   type PageView,
 } from "../blueprints/browser-session.js";
 import { compareStyles } from "../conformance.js";
+import { resolveSecrets } from "../secrets.js";
 
 /** Flag that turns off the element list appended to every action's result. */
 export const AUTO_DESCRIBE_FLAG = "disable-auto-describe";
@@ -188,7 +190,7 @@ const click = defineTool({
 
 const type = defineTool({
   name: "type",
-  description: `Type text into a field by Element Ref, replacing its contents by default (\`clear: false\` appends); \`submit: true\` presses Enter afterwards. ${OBSERVE_NOTE}`,
+  description: `Type text into a field by Element Ref, replacing its contents by default (\`clear: false\` appends); \`submit: true\` presses Enter afterwards. For credentials write \`{{secret:NAME}}\` — the daemon substitutes the value from MAHERAGENT_SECRET_NAME or a secrets.env file, so the plaintext never enters your context (and the post-action view is skipped for that call). ${OBSERVE_NOTE}`,
   input: z.object({
     ref: z.string(),
     text: z.string(),
@@ -199,7 +201,10 @@ const type = defineTool({
   }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
-    await browser.type(args.ref, args.text, { clear: args.clear, submit: args.submit });
+    const { text, used } = resolveSecrets(args.text);
+    await browser.type(args.ref, text, { clear: args.clear, submit: args.submit });
+    // Never echo a page state that could carry the resolved value back.
+    if (used.length > 0) return { ok: true as const, secrets: used, observed: false };
     return observed(browser, args.observe, {});
   },
 });
@@ -232,6 +237,28 @@ const scroll = defineTool({
   },
 });
 
+const drag = defineTool({
+  name: "drag",
+  description: `Drag an element by Ref and drop it onto another element (\`toRef\`), or move it by \`dx\`/\`dy\` pixels from its center (sliders, reorderable lists). ${OBSERVE_NOTE}`,
+  input: z
+    .object({
+      ref: z.string(),
+      toRef: z.string().optional(),
+      dx: z.number().optional(),
+      dy: z.number().optional(),
+      observe: observeArg,
+      session: sessionArg,
+    })
+    .refine((v) => v.toRef != null || v.dx != null || v.dy != null, {
+      message: "Provide `toRef`, or `dx`/`dy`.",
+    }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.drag(args);
+    return observed(browser, args.observe, {});
+  },
+});
+
 const pressKey = defineTool({
   name: "press-key",
   description: `Press a key or chord, e.g. "Enter", "Escape", "Tab", "ArrowDown", "Control+a", "Shift+Tab". ${OBSERVE_NOTE}`,
@@ -239,6 +266,44 @@ const pressKey = defineTool({
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
     await browser.pressKey(args.key);
+    return observed(browser, args.observe, {});
+  },
+});
+
+const selectOption = defineTool({
+  name: "select-option",
+  description: `Choose an option in a native <select> by Ref — by option \`value\`, visible \`label\`, or \`index\`. (Custom dropdowns are plain elements: click them.) ${OBSERVE_NOTE}`,
+  input: z
+    .object({
+      ref: z.string(),
+      value: z.string().optional(),
+      label: z.string().optional(),
+      index: z.number().int().min(0).optional(),
+      observe: observeArg,
+      session: sessionArg,
+    })
+    .refine((v) => v.value != null || v.label != null || v.index != null, {
+      message: "Provide `value`, `label`, or `index`.",
+    }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    const selected = await browser.selectOption(args.ref, args);
+    return observed(browser, args.observe, { selected });
+  },
+});
+
+const uploadFile = defineTool({
+  name: "upload-file",
+  description: `Attach local files to a file input by Ref (absolute \`paths\`). ${OBSERVE_NOTE}`,
+  input: z.object({
+    ref: z.string(),
+    paths: z.array(z.string()).min(1),
+    observe: observeArg,
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    await browser.uploadFile(args.ref, args.paths);
     return observed(browser, args.observe, {});
   },
 });
@@ -286,6 +351,133 @@ const compareStylesTool = defineTool({
       return { ref: args.ref, conforms: false, error: "stale_ref", comparisons: [] };
     }
     return { ref: args.ref, ...compareStyles(args.expected, actual) };
+  },
+});
+
+// ── Page state ──────────────────────────────────────────────────────────────
+
+const evaluate = defineTool({
+  name: "evaluate",
+  description:
+    'Evaluate a JavaScript expression in the page and return its JSON-serializable value, e.g. `document.title` or `(() => window.__STORE__.getState().user)()`. With `ref`, the expression runs with `el` bound to that element: `el.scrollTop`, `getComputedStyle(el).gap`. For reading app state and probing theories, not for driving the UI — use click/type for that.',
+  input: z.object({ expression: z.string(), ref: z.string().optional(), session: sessionArg }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => ({
+    value: (await browser.evaluate(args.expression, args.ref)) ?? null,
+  }),
+});
+
+const cookies = defineTool({
+  name: "cookies",
+  description:
+    "Read or write the session's cookies (HttpOnly included). `get` (optionally scoped by `url`), `set` (`name`, `value`, plus `url` or `domain`; optional `path`, `httpOnly`, `secure`, `sameSite`, `expires` in Unix seconds), `delete` (`name`), `clear`. Seed auth before a flow or check what a login left behind.",
+  input: z
+    .object({
+      action: z.enum(["get", "set", "delete", "clear"]),
+      name: z.string().optional(),
+      value: z.string().optional(),
+      url: z.string().url().optional(),
+      domain: z.string().optional(),
+      path: z.string().optional(),
+      httpOnly: z.boolean().optional(),
+      secure: z.boolean().optional(),
+      sameSite: z.enum(["Strict", "Lax", "None"]).optional(),
+      expires: z.number().optional(),
+      session: sessionArg,
+    })
+    .refine((v) => v.action !== "set" || (v.name != null && v.value != null && (v.url != null || v.domain != null)), {
+      message: "`set` needs `name`, `value`, and `url` or `domain`.",
+    })
+    .refine((v) => v.action !== "delete" || v.name != null, {
+      message: "`delete` needs `name`.",
+    }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    switch (args.action) {
+      case "get":
+        return { cookies: await browser.cookies({ action: "get", url: args.url }) };
+      case "set":
+        return {
+          cookies: await browser.cookies({
+            action: "set",
+            name: args.name!,
+            value: args.value!,
+            url: args.url,
+            domain: args.domain,
+            path: args.path,
+            httpOnly: args.httpOnly,
+            secure: args.secure,
+            sameSite: args.sameSite,
+            expires: args.expires,
+          }),
+        };
+      case "delete":
+        return {
+          cookies: await browser.cookies({
+            action: "delete",
+            name: args.name!,
+            domain: args.domain,
+            path: args.path,
+          }),
+        };
+      case "clear":
+        return { cookies: await browser.cookies({ action: "clear" }) };
+    }
+  },
+});
+
+const storage = defineTool({
+  name: "storage",
+  description:
+    "Read or write the active page's Web Storage. `store`: local | session. `get` returns one `key` or every entry; `set` needs `key` and `value`; `remove` needs `key`; `clear` empties the store. Per origin of the active tab.",
+  input: z
+    .object({
+      store: z.enum(["local", "session"]).default("local"),
+      action: z.enum(["get", "set", "remove", "clear"]),
+      key: z.string().optional(),
+      value: z.string().optional(),
+      session: sessionArg,
+    })
+    .refine((v) => v.action !== "set" || (v.key != null && v.value != null), {
+      message: "`set` needs `key` and `value`.",
+    })
+    .refine((v) => v.action !== "remove" || v.key != null, { message: "`remove` needs `key`." }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => ({
+    store: args.store,
+    value: await browser.storage({
+      store: args.store,
+      action: args.action,
+      key: args.key,
+      value: args.value,
+    }),
+  }),
+});
+
+const tabs = defineTool({
+  name: "tabs",
+  description:
+    "Manage the session's tabs. Every other tool acts on the *active* tab. `list` shows them (ids t1, t2, …); `select` makes `tab` active; `new` opens a tab (optionally at `url`) and activates it; `close` closes `tab` (default: the active one). An action's result lists `openedTabs` when it opened a popup or target=_blank link — select it to follow.",
+  input: z
+    .object({
+      action: z.enum(["list", "select", "new", "close"]).default("list"),
+      tab: z.string().optional(),
+      url: z.string().url().optional(),
+      session: sessionArg,
+    })
+    .refine((v) => v.action !== "select" || v.tab != null, { message: "`select` needs `tab`." }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    switch (args.action) {
+      case "list":
+        return { tabs: await browser.tabs({ action: "list" }) };
+      case "select":
+        return { tabs: await browser.tabs({ action: "select", tab: args.tab! }) };
+      case "new":
+        return { tabs: await browser.tabs({ action: "new", url: args.url }) };
+      case "close":
+        return { tabs: await browser.tabs({ action: "close", tab: args.tab }) };
+    }
   },
 });
 
@@ -348,9 +540,16 @@ export const coreTools: AnyToolDefinition[] = [
   type,
   hover,
   scroll,
+  drag,
   pressKey,
+  selectOption,
+  uploadFile,
   extractStyles,
   compareStylesTool,
+  evaluate,
+  cookies,
+  storage,
+  tabs,
   getConsoleLogs,
   getNetworkLog,
   profilePerformance,

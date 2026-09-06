@@ -3,11 +3,12 @@
 //   tools [<name>]             list tools, or show one tool's schema
 //   run <tool> [json]          call a tool and print its result
 //   flags | enable | disable   read and toggle feature flags
+//   secrets                    list the names {{secret:NAME}} can resolve (never values)
 // Everything that needs the browser goes through the same daemon the editor
 // uses, so the CLI and the agent share one live session.
 
 import { ensureToolServer, ToolCallError, ToolServerClient } from "@ramisalem/mcp";
-import { clearDaemonInfo, readDaemonInfo } from "@ramisalem/tool-server";
+import { clearDaemonInfo, listSecrets, readDaemonInfo } from "@ramisalem/tool-server";
 import { listFlags, setFlag, type FlagScope } from "@ramisalem/configuration-core";
 
 const USAGE = `maheragent — drive a web app over MCP
@@ -18,6 +19,7 @@ Usage:
   maheragent run <tool> [json-args]
   maheragent flags
   maheragent enable|disable <flag> [--project]
+  maheragent secrets
   maheragent init|remove [--editor claude|cursor|vscode]
   maheragent mcp
 `;
@@ -41,6 +43,8 @@ export async function runCli(argv: string[]): Promise<void> {
       return run(rest);
     case "flags":
       return flags();
+    case "secrets":
+      return secrets();
     case "enable":
       return toggle(rest, true);
     case "disable":
@@ -110,7 +114,7 @@ async function tools(name?: string): Promise<void> {
     return;
   }
   for (const t of all) {
-    console.log(`${t.enabled ? " " : "·"} ${t.name.padEnd(16)} ${t.description}`);
+    console.log(`${t.enabled ? " " : "·"} ${t.name.padEnd(20)} ${t.description}`);
   }
 }
 
@@ -154,6 +158,19 @@ function flags(): void {
   }
   for (const f of all) {
     console.log(`${f.enabled ? "on " : "off"}  ${f.name.padEnd(20)} (${f.scope})`);
+  }
+}
+
+function secrets(): void {
+  const all = listSecrets();
+  if (all.length === 0) {
+    console.log(
+      "no secrets found — define MAHERAGENT_SECRET_<NAME> in the environment, or NAME=value in .maheragent/secrets.env (project) or ~/.maheragent/secrets.env (global)",
+    );
+    return;
+  }
+  for (const s of all) {
+    console.log(`${s.shadowed ? "·" : " "} ${s.name.padEnd(24)} ${s.source}${s.shadowed ? " (shadowed)" : ""}`);
   }
 }
 

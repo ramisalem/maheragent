@@ -124,6 +124,11 @@ test("password values never leave the page as text", async () => {
   const pw = byName(await describe(), "Password");
   await registry.execute("type", { ref: pw.ref, text: "s3cret!", observe: false });
   assert.equal(byName(await describe(), "Password").value, "***");
+  assert.equal(
+    await registry.execute("evaluate", { expression: "document.getElementById('pw').value" }).then((r) => r.value),
+    "s3cret!",
+    "the value did reach the field",
+  );
 });
 
 test("interactions return the page after the action; observe:false skips it", async () => {
@@ -168,6 +173,10 @@ test("set-viewport resizes the page and emulates a color scheme", async () => {
     { width: view.viewport.width, height: view.viewport.height, colorScheme: view.viewport.colorScheme },
     { width: 500, height: 400, colorScheme: "dark" },
   );
+  const dark = await registry.execute("evaluate", {
+    expression: "matchMedia('(prefers-color-scheme: dark)').matches",
+  });
+  assert.equal(dark.value, true);
   await registry.execute("set-viewport", { width: 1280, height: 720, colorScheme: "light", observe: false });
 });
 
@@ -177,4 +186,38 @@ test("screenshot by Ref crops to the element", async () => {
   const png = Buffer.from(shot.base64, "base64");
   // IHDR width is the big-endian uint32 at byte 16.
   assert.equal(png.readUInt32BE(16), 20);
+});
+
+test("select-option, scroll inside an element, and drag work by Ref", async () => {
+  const els = await describe();
+  const picked = await registry.execute("select-option", { ref: byName(els, "Pick").ref, label: "Two", observe: false });
+  assert.deepEqual(picked.selected, ["two"]);
+
+  const scroller = (await registry.execute("find", { selector: "#scroller" })).elements[0];
+  await registry.execute("scroll", { ref: scroller.ref, dy: 120, observe: false });
+  const top = await registry.execute("evaluate", { ref: scroller.ref, expression: "el.scrollTop" });
+  assert.equal(top.value, 120);
+
+  const range = byName(els, "Volume");
+  await registry.execute("drag", { ref: range.ref, dx: 80, observe: false });
+  const value = await registry.execute("evaluate", { ref: range.ref, expression: "Number(el.value)" });
+  assert.ok(value.value > 0, `slider moved to ${value.value}`);
+});
+
+test("tabs: a popup is announced, can be selected, and cannot leave zero tabs", async () => {
+  const els = await describe();
+  const view = await registry.execute("click", { ref: byName(els, "Open popup").ref });
+  assert.deepEqual(view.openedTabs, ["t2"]);
+
+  const listed = (await registry.execute("tabs", { action: "list" })).tabs;
+  assert.equal(listed.length, 2);
+  assert.equal(listed.find((t) => t.active).tab, "t1", "actions stay on the active tab until told otherwise");
+
+  await registry.execute("tabs", { action: "select", tab: "t2" });
+  assert.ok(byName(await describe(), "Inside frame"), "describe now reads the popup");
+
+  const remaining = (await registry.execute("tabs", { action: "close" })).tabs;
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].active, true, "the survivor becomes active");
+  await assert.rejects(registry.execute("tabs", { action: "close" }), /last tab/);
 });

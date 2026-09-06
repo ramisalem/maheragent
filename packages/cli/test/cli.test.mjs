@@ -72,3 +72,14 @@ test("enable without a flag name errors", async () => {
   const { code } = await capture(["enable"]);
   assert.equal(code, 1);
 });
+
+test("secrets lists names and sources, never values", async () => {
+  process.env.MAHERAGENT_SECRET_API_KEY = "sk-live-do-not-print";
+  try {
+    const { out } = await capture(["secrets"]);
+    assert.match(out, /API_KEY\s+env/);
+    assert.ok(!out.includes("sk-live"), "value stays out of the output");
+  } finally {
+    delete process.env.MAHERAGENT_SECRET_API_KEY;
+  }
+});

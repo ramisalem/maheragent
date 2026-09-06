@@ -6,6 +6,7 @@ import {
   chromium,
   type Browser,
   type BrowserContext,
+  type Cookie,
   type FrameLocator,
   type Locator,
   type Page,
@@ -55,6 +56,8 @@ export interface PageView {
   elements: DescribedElement[];
   /** True when the element list hit the size cap — narrow it with `find`. */
   truncated?: boolean;
+  /** Tabs opened since the last observation (popups, target=_blank). Switch with `tabs`. */
+  openedTabs?: string[];
 }
 
 export interface PageState {
@@ -101,6 +104,21 @@ export interface ScrollOptions {
   ref?: string;
   dx?: number;
   dy?: number;
+}
+
+export interface DragOptions {
+  ref: string;
+  /** Drop onto this element… */
+  toRef?: string;
+  /** …or move the pointer by this many pixels from the element's center. */
+  dx?: number;
+  dy?: number;
+}
+
+export interface SelectOptionChoice {
+  value?: string;
+  label?: string;
+  index?: number;
 }
 
 export interface DescribeOptions {
@@ -159,6 +177,44 @@ export interface ViewportState {
   colorScheme?: string;
   reducedMotion?: string;
 }
+
+export type CookieOp =
+  | { action: "get"; url?: string }
+  | {
+      action: "set";
+      name: string;
+      value: string;
+      url?: string;
+      domain?: string;
+      path?: string;
+      httpOnly?: boolean;
+      secure?: boolean;
+      sameSite?: "Strict" | "Lax" | "None";
+      /** Unix time in seconds. */
+      expires?: number;
+    }
+  | { action: "delete"; name: string; domain?: string; path?: string }
+  | { action: "clear" };
+
+export interface StorageOp {
+  store: "local" | "session";
+  action: "get" | "set" | "remove" | "clear";
+  key?: string;
+  value?: string;
+}
+
+export interface TabInfo {
+  tab: string;
+  url: string;
+  title: string;
+  active: boolean;
+}
+
+export type TabOp =
+  | { action: "list" }
+  | { action: "select"; tab: string }
+  | { action: "new"; url?: string }
+  | { action: "close"; tab?: string };
 
 /** A captured console message or uncaught page error. */
 export interface ConsoleEntry {
@@ -273,7 +329,11 @@ export interface BrowserSession {
   type(ref: string, text: string, opts?: TypeOptions): Promise<void>;
   hover(ref: string): Promise<void>;
   scroll(opts?: ScrollOptions): Promise<void>;
+  drag(opts: DragOptions): Promise<void>;
   pressKey(key: string): Promise<void>;
+  /** Choose a `<select>` option by value, label, or index; returns the selected values. */
+  selectOption(ref: string, choice: SelectOptionChoice): Promise<string[]>;
+  uploadFile(ref: string, paths: string[]): Promise<void>;
   /**
    * Computed styles of the element behind `ref`, or null if the Ref is stale
    * (or `closest` matches no ancestor).
@@ -289,6 +349,11 @@ export interface BrowserSession {
   ): Promise<ComputedStyles | null>;
   /** Resize the viewport and/or emulate a color scheme or reduced motion. */
   setViewport(opts: ViewportOptions): Promise<ViewportState>;
+  /** Evaluate a JavaScript expression in the page, or against an element when `ref` is given. */
+  evaluate(expression: string, ref?: string): Promise<unknown>;
+  cookies(op: CookieOp): Promise<Cookie[]>;
+  storage(op: StorageOp): Promise<Record<string, string> | string | null>;
+  tabs(op: TabOp): Promise<TabInfo[]>;
   /** Console messages + page errors captured since the session started (ring-buffered). */
   getConsoleLogs(query?: ConsoleLogQuery): Promise<ConsoleEntry[]>;
   /** Network responses + failed requests captured since the session started (ring-buffered). */
@@ -862,8 +927,45 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
     );
   }
 
-  const active: Page = first;
-  attachDiagnostics(active);
+  // ── Tabs ──────────────────────────────────────────────────────────────────
+  // Every tool acts on the active tab. New pages (popups, target=_blank) are
+  // registered as they appear and reported on the next observation so the
+  // agent can switch to them explicitly.
+  const tabIds = new Map<Page, string>();
+  let tabSeq = 0;
+  let active: Page = first;
+  const openedTabs: string[] = [];
+
+  function register(page: Page, announce: boolean): void {
+    const id = `t${++tabSeq}`;
+    tabIds.set(page, id);
+    attachDiagnostics(page);
+    if (announce) openedTabs.push(id);
+    page.on("close", () => {
+      tabIds.delete(page);
+      if (active === page) {
+        const remaining = context.pages().filter((p) => tabIds.has(p));
+        if (remaining.length > 0) active = remaining[remaining.length - 1];
+      }
+    });
+  }
+  register(first, false);
+  context.on("page", (page) => register(page, true));
+
+  function tabByName(name: string): Page {
+    for (const [page, id] of tabIds) if (id === name) return page;
+    throw new Error(`No tab "${name}". Call tabs {"action":"list"} for the open tabs.`);
+  }
+
+  async function tabList(): Promise<TabInfo[]> {
+    const out: TabInfo[] = [];
+    for (const page of context.pages()) {
+      const id = tabIds.get(page);
+      if (!id) continue;
+      out.push({ tab: id, url: page.url(), title: await page.title().catch(() => ""), active: page === active });
+    }
+    return out;
+  }
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   // Ref -> chain of iframe Refs (outermost first) it lives under. Rebuilt by
@@ -907,6 +1009,7 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
       elements: result.elements,
     };
     if (result.truncated) view.truncated = true;
+    if (openedTabs.length > 0) view.openedTabs = openedTabs.splice(0);
     return view;
   }
 
@@ -1043,8 +1146,33 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
         await active.mouse.wheel(dx, dy);
       }
     },
+    async drag(opts) {
+      const source = await resolve(opts.ref);
+      if (opts.toRef) {
+        await source.dragTo(await resolve(opts.toRef));
+        return;
+      }
+      const box = await source.boundingBox();
+      if (!box) throw new StaleRefError(opts.ref);
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      await active.mouse.move(cx, cy);
+      await active.mouse.down();
+      await active.mouse.move(cx + (opts.dx ?? 0), cy + (opts.dy ?? 0), { steps: 12 });
+      await active.mouse.up();
+    },
     async pressKey(key) {
       await active.keyboard.press(key);
+    },
+    async selectOption(ref, choice) {
+      const locator = await resolve(ref);
+      if (choice.value !== undefined) return locator.selectOption(choice.value);
+      if (choice.label !== undefined) return locator.selectOption({ label: choice.label });
+      if (choice.index !== undefined) return locator.selectOption({ index: choice.index });
+      throw new Error("select-option needs a `value`, `label`, or `index`.");
+    },
+    async uploadFile(ref, paths) {
+      await (await resolve(ref)).setInputFiles(paths);
     },
     async extractStyles(ref, opts) {
       // A stale Ref is a null measurement here (compare-styles turns it into a
@@ -1080,6 +1208,96 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
       }
       const size = active.viewportSize() ?? { width: 0, height: 0 };
       return { ...size, ...emulation };
+    },
+    async evaluate(expression, ref) {
+      if (ref) {
+        const locator = await resolve(ref);
+        return locator.evaluate((el, expr) => {
+          // `el` is the resolved element; the expression may reference it.
+          const fn = new Function("el", `return (${expr});`) as (el: Element) => unknown;
+          return fn(el);
+        }, expression);
+      }
+      return active.evaluate(expression);
+    },
+    async cookies(op) {
+      switch (op.action) {
+        case "get":
+          return context.cookies(op.url ? [op.url] : undefined);
+        case "set": {
+          const cookie: Parameters<BrowserContext["addCookies"]>[0][number] = {
+            name: op.name,
+            value: op.value,
+            ...(op.url ? { url: op.url } : { domain: op.domain, path: op.path ?? "/" }),
+            ...(op.httpOnly !== undefined ? { httpOnly: op.httpOnly } : {}),
+            ...(op.secure !== undefined ? { secure: op.secure } : {}),
+            ...(op.sameSite !== undefined ? { sameSite: op.sameSite } : {}),
+            ...(op.expires !== undefined ? { expires: op.expires } : {}),
+          };
+          await context.addCookies([cookie]);
+          return context.cookies();
+        }
+        case "delete":
+          await context.clearCookies({
+            name: op.name,
+            ...(op.domain ? { domain: op.domain } : {}),
+            ...(op.path ? { path: op.path } : {}),
+          });
+          return context.cookies();
+        case "clear":
+          await context.clearCookies();
+          return [];
+      }
+    },
+    storage(op) {
+      return active.evaluate((o) => {
+        const store = o.store === "local" ? window.localStorage : window.sessionStorage;
+        switch (o.action) {
+          case "get": {
+            if (o.key !== undefined) return store.getItem(o.key);
+            const all: Record<string, string> = {};
+            for (let i = 0; i < store.length; i++) {
+              const k = store.key(i);
+              if (k !== null) all[k] = store.getItem(k) ?? "";
+            }
+            return all;
+          }
+          case "set":
+            if (o.key === undefined || o.value === undefined) throw new Error("set needs `key` and `value`.");
+            store.setItem(o.key, o.value);
+            return store.getItem(o.key);
+          case "remove":
+            if (o.key === undefined) throw new Error("remove needs `key`.");
+            store.removeItem(o.key);
+            return null;
+          case "clear":
+            store.clear();
+            return null;
+        }
+      }, op);
+    },
+    async tabs(op) {
+      switch (op.action) {
+        case "list":
+          return tabList();
+        case "select":
+          active = tabByName(op.tab);
+          await active.bringToFront();
+          return tabList();
+        case "new": {
+          const page = await context.newPage();
+          active = page;
+          openedTabs.length = 0; // the agent asked for it; no need to announce it
+          if (op.url) await page.goto(op.url, { waitUntil: "domcontentloaded" });
+          return tabList();
+        }
+        case "close": {
+          const page = op.tab ? tabByName(op.tab) : active;
+          if (tabIds.size === 1) throw new Error("Cannot close the last tab; navigate it instead.");
+          await page.close();
+          return tabList();
+        }
+      }
     },
     async getConsoleLogs(query) {
       const level = query?.level === "warn" ? "warning" : query?.level;
