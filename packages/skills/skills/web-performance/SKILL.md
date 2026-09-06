@@ -10,7 +10,8 @@ Measure first, then recommend — every suggestion must trace to a number from
 
 ## The loop
 
-1. **Navigate** to the page (`navigate`), then **`profile-performance`** `{}`.
+1. **Navigate** to the page (`navigate`) — `set-viewport` `{ "width": 390, "height": 844 }`
+   first for a mobile measurement — then **`profile-performance`** `{}`.
    It returns Core Web Vitals + timing from the loaded document:
    - `lcp` (Largest Contentful Paint, ms), `cls` (Cumulative Layout Shift),
      `fcp` (First Contentful Paint, ms)
