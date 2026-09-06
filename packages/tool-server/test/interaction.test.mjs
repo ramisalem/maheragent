@@ -47,17 +47,17 @@ after(async () => {
 const refByName = (els, name) => els.find((e) => e.name === name)?.ref;
 
 test("type fills a field by Element Ref", async () => {
-  let els = await registry.execute("describe", {});
+  let els = (await registry.execute("describe", {})).elements;
   await registry.execute("type", { ref: refByName(els, "Name"), text: "hello" });
-  els = await registry.execute("describe", {});
+  els = (await registry.execute("describe", {})).elements;
   assert.equal(els.find((e) => e.name === "Name").value, "hello");
 });
 
 test("click by Element Ref drives page behavior", async () => {
-  let els = await registry.execute("describe", {});
+  let els = (await registry.execute("describe", {})).elements;
   assert.ok(!els.some((e) => e.name === "Done"), "hidden before click");
   await registry.execute("click", { ref: refByName(els, "Reveal") });
-  els = await registry.execute("describe", {});
+  els = (await registry.execute("describe", {})).elements;
   assert.ok(
     els.some((e) => e.role === "heading" && e.name === "Done"),
     "revealed after click",
@@ -73,7 +73,7 @@ test("click requires exactly one of ref or coordinates", async () => {
 });
 
 test("extract-styles returns grounding evidence", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const styles = await registry.execute("extract-styles", {
     ref: refByName(els, "Title"),
   });
@@ -86,7 +86,7 @@ test("extract-styles returns null for a stale Ref", async () => {
 });
 
 test("extract-styles reports per-side border widths", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const styles = await registry.execute("extract-styles", {
     ref: refByName(els, "Sections"),
     closest: ".tabs-root",
@@ -98,7 +98,7 @@ test("extract-styles reports per-side border widths", async () => {
 });
 
 test("extract-styles measures properties outside the curated set", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const styles = await registry.execute("extract-styles", {
     ref: refByName(els, "Title"),
     properties: ["fontStyle", "font-style"],
@@ -109,7 +109,7 @@ test("extract-styles measures properties outside the curated set", async () => {
 });
 
 test("compare-styles never reports a requested property as unmeasured", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const report = await registry.execute("compare-styles", {
     ref: refByName(els, "Title"),
     expected: { fontStyle: "italic" },
@@ -121,7 +121,7 @@ test("compare-styles never reports a requested property as unmeasured", async ()
 });
 
 test("compare-styles retargets to the styled wrapper via closest", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const ref = refByName(els, "Sections");
   const expected = { borderBottomWidth: "2px" };
 
@@ -137,7 +137,7 @@ test("compare-styles retargets to the styled wrapper via closest", async () => {
 });
 
 test("compare-styles reports a stale ref when closest matches nothing", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const report = await registry.execute("compare-styles", {
     ref: refByName(els, "Sections"),
     expected: { color: "rgb(0, 0, 0)" },

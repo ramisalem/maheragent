@@ -1,7 +1,7 @@
 // Tool registrations. Each Tool is a named, agent-callable operation with a typed
 // input schema; it declares the Services it needs and the Registry resolves them.
 //
-//   perception:   navigate, describe, screenshot
+//   perception:   navigate, describe, find, screenshot
 //   interaction:  click, type, hover, scroll, press-key
 //   conformance:  extract-styles, compare-styles   (grounding + deterministic diff)
 //   diagnostics:  get-console-logs, get-network-log
@@ -36,10 +36,34 @@ const navigate = defineTool({
 const describe = defineTool({
   name: "describe",
   description:
-    "List the interactable elements on the current page, each with a stable Element Ref to target.",
-  input: z.object({ session: sessionArg }),
+    "List the elements on the current page, each with a stable Element Ref (e1, e2, …) to target, a role, a name, and a viewport box. Interactables and headings by default; `content: true` adds paragraphs, list items, cells, labels, and images (what design conformance needs to measure). Pierces open shadow roots and same-origin iframes (`frame` names the iframe). Refs are renumbered on every describe, so re-describe after the page changes.",
+  input: z.object({
+    content: z.boolean().optional(),
+    maxElements: z.number().int().min(1).max(10000).optional(),
+    session: sessionArg,
+  }),
   services: (args) => browserOf(args.session),
-  execute: (_args, { browser }) => browser.describe(),
+  execute: (args, { browser }) =>
+    browser.describe({ content: args.content, maxElements: args.maxElements }),
+});
+
+const find = defineTool({
+  name: "find",
+  description:
+    'Tag and return the elements matching a CSS `selector` and/or a case-insensitive `text` substring — the way to get a Ref for anything `describe` does not list (a paragraph, an image, a `.hero` card). Existing Refs stay valid; new ones continue the numbering. Text matches land on the deepest element that renders the text.',
+  input: z
+    .object({
+      selector: z.string().optional(),
+      text: z.string().optional(),
+      maxElements: z.number().int().min(1).max(10000).optional(),
+      session: sessionArg,
+    })
+    .refine((v) => v.selector != null || v.text != null, {
+      message: "Provide `selector`, `text`, or both.",
+    }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) =>
+    browser.find({ selector: args.selector, text: args.text, maxElements: args.maxElements }),
 });
 
 const screenshot = defineTool({
@@ -58,7 +82,7 @@ const screenshot = defineTool({
 const click = defineTool({
   name: "click",
   description:
-    'Click an element by its Element Ref, or fall back to viewport coordinates (x, y). If a click visibly focuses the element but its handler never fires (typical inside virtualized data grids, whose cells re-render between mousedown and mouseup), retry with `mode: "js"` — it dispatches el.click() programmatically and is immune to that race. Signature of the race: the element gains a focus ring, yet nothing navigates/opens.',
+    'Click an element by its Element Ref, or fall back to viewport coordinates (x, y). If a click visibly focuses the element but its handler never fires (typical inside virtualized data grids, whose cells re-render between mousedown and mouseup), retry with `mode: "js"` — it dispatches el.click() programmatically and is immune to that race. Signature of the race: the element gains a focus ring, yet nothing navigates/opens. A Ref that is no longer on the page fails immediately with `stale_ref`: describe again.',
   input: z
     .object({
       ref: z.string().optional(),
@@ -140,7 +164,7 @@ const pressKey = defineTool({
 const extractStyles = defineTool({
   name: "extract-styles",
   description:
-    "Read the computed styles of an element by Element Ref — the grounding evidence for a Conformance Check. Returns a curated set (colors, typography, box, per-side borders); pass `properties` to add any other CSS property, e.g. [\"outlineColor\", \"gap\", \"--brand\"]. Names may be camelCase or CSS spelling.",
+    "Read the computed styles of an element by Element Ref — the grounding evidence for a Conformance Check. Returns a curated set (colors, typography, box, per-side borders); pass `properties` to add any other CSS property, e.g. [\"outlineColor\", \"gap\", \"--brand\"]. Names may be camelCase or CSS spelling. Use `find` first to get a Ref for a paragraph, image, or container.",
   input: z.object({
     ref: z.string(),
     properties: z.array(z.string()).optional(),
@@ -230,6 +254,7 @@ const getNetworkLog = defineTool({
 export const coreTools: AnyToolDefinition[] = [
   navigate,
   describe,
+  find,
   screenshot,
   click,
   type,

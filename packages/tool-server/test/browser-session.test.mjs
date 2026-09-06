@@ -36,7 +36,7 @@ test("navigate reports the page state", async () => {
 });
 
 test("describe returns elements with stable Element Refs", async () => {
-  const els = await registry.execute("describe", {});
+  const els = (await registry.execute("describe", {})).elements;
   const byRole = (r) => els.filter((e) => e.role === r);
 
   assert.ok(byRole("heading").some((e) => e.name === "Checkout"), "heading");

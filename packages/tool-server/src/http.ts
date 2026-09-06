@@ -11,6 +11,7 @@ import {
   UnknownToolError,
   type Registry,
 } from "@ramisalem/registry";
+import { StaleRefError } from "./blueprints/browser-session.js";
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
@@ -37,6 +38,12 @@ function errorResponse(err: unknown): { status: number; body: unknown } {
   if (err instanceof InvalidToolArgsError) {
     const issues = (err.cause as { issues?: unknown })?.issues;
     return { status: 400, body: { error: "invalid_args", message: err.message, issues } };
+  }
+  // A stale Element Ref is the agent's problem to fix (describe again), not a
+  // server fault — give it a code it can branch on.
+  if (err instanceof StaleRefError || (err as { name?: string })?.name === "StaleRefError") {
+    const message = err instanceof Error ? err.message : String(err);
+    return { status: 409, body: { error: "stale_ref", message } };
   }
   const message = err instanceof Error ? err.message : String(err);
   return { status: 500, body: { error: "tool_failed", message } };

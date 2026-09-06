@@ -7,15 +7,20 @@ import { Registry, type RegistryOptions } from "@ramisalem/registry";
 import { createHttpServer } from "./http.js";
 import { registerCoreTools } from "./tools/index.js";
 
-export { browserSessionBlueprint } from "./blueprints/browser-session.js";
+export { browserSessionBlueprint, StaleRefError } from "./blueprints/browser-session.js";
 export type {
   BoundingBox,
   BrowserSession,
   BrowserSessionInput,
   ClickTarget,
   ComputedStyles,
+  ConsoleEntry,
   DescribedElement,
+  DescribeOptions,
+  FindOptions,
+  NetworkEntry,
   PageState,
+  PageView,
   PerformanceReport,
   Screenshot,
 } from "./blueprints/browser-session.js";
