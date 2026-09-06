@@ -7,6 +7,7 @@ import { z } from "zod";
 import { defineTool, Registry, type RegistryOptions } from "@ramisalem/registry";
 import { createHttpServer } from "./http.js";
 import { registerCoreTools } from "./tools/index.js";
+import { flowTools } from "./tools/flows.js";
 
 export { browserSessionBlueprint, StaleRefError } from "./blueprints/browser-session.js";
 export type {
@@ -54,6 +55,25 @@ export {
 export { coreTools, registerCoreTools, AUTO_DESCRIBE_FLAG } from "./tools/index.js";
 export { diffPngs, type DiffOptions, type DiffRegion, type DiffResult } from "./visual-diff.js";
 export { screenshotDiff, type ScreenshotDiffArgs, type ScreenshotDiffResult } from "./screenshot-diff.js";
+export {
+  baselineDir,
+  executeStep,
+  flowsDir,
+  FlowParseError,
+  listFlows,
+  parseFlow,
+  parseStep,
+  readFlowFile,
+  resolveFlowPath,
+  runFlow,
+  writeFlowFile,
+  type Flow,
+  type FlowReport,
+  type RunOptions,
+  type Step,
+  type StepReport,
+  type Target,
+} from "./flows.js";
 export { createHttpServer } from "./http.js";
 export {
   clearDaemonInfo,
@@ -104,6 +124,7 @@ export function createToolRegistry(options: RegistryOptions = {}): Registry {
   const registry = new Registry(options);
   registerCoreTools(registry);
   registry.registerTool(sessionsTool(registry));
+  registry.registerTools(flowTools(registry));
   return registry;
 }
 

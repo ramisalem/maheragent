@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli } from "@ramisalem/cli";
+import { runCli, renderFlowReport } from "@ramisalem/cli";
 
 let home;
 
@@ -82,4 +82,32 @@ test("secrets lists names and sources, never values", async () => {
   } finally {
     delete process.env.MAHERAGENT_SECRET_API_KEY;
   }
+});
+
+test("flow list reports an empty flows dir; flow run needs a name", async () => {
+  const { out } = await capture(["flow", "list"]);
+  assert.match(out, /no flows/);
+  const { code } = await capture(["flow", "run"]);
+  assert.equal(code, 1);
+});
+
+test("renderFlowReport prints one line per step and a verdict", () => {
+  const text = renderFlowReport({
+    flow: "login",
+    path: "/x/login.yaml",
+    ok: false,
+    passed: 1,
+    failed: 1,
+    errored: 0,
+    skipped: 1,
+    steps: [
+      { index: 0, kind: "navigate", target: "http://x/", status: "pass", durationMs: 12 },
+      { index: 1, kind: "click", target: 'text "Save"', status: "fail", reason: "no visible element", durationMs: 1000 },
+      { index: 2, kind: "echo", status: "skip", durationMs: 0 },
+    ],
+  });
+  assert.match(text, /\[1\] ✓ navigate http:\/\/x\/ \(12ms\)/);
+  assert.match(text, /\[2\] ✗ click text "Save" — no visible element/);
+  assert.match(text, /\[3\] · echo/);
+  assert.match(text, /FAIL — 1 passed, 1 failed, 0 errored, 1 skipped/);
 });

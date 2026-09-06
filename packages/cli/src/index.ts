@@ -4,11 +4,20 @@
 //   run <tool> [json]          call a tool and print its result
 //   flags | enable | disable   read and toggle feature flags
 //   secrets                    list the names {{secret:NAME}} can resolve (never values)
+//   flow list | run <name>     replay a recorded flow; exit 1 when it fails (CI)
 // Everything that needs the browser goes through the same daemon the editor
 // uses, so the CLI and the agent share one live session.
 
 import { ensureToolServer, ToolCallError, ToolServerClient } from "@ramisalem/mcp";
-import { clearDaemonInfo, listSecrets, readDaemonInfo } from "@ramisalem/tool-server";
+import {
+  clearDaemonInfo,
+  listFlows,
+  listSecrets,
+  readDaemonInfo,
+  resolveFlowPath,
+  type FlowReport,
+  type StepReport,
+} from "@ramisalem/tool-server";
 import { listFlags, setFlag, type FlagScope } from "@ramisalem/configuration-core";
 
 const USAGE = `maheragent — drive a web app over MCP
@@ -20,6 +29,8 @@ Usage:
   maheragent flags
   maheragent enable|disable <flag> [--project]
   maheragent secrets
+  maheragent flow list
+  maheragent flow run <name|path> [--update-baselines] [--json]
   maheragent init|remove [--editor claude|cursor|vscode]
   maheragent mcp
 `;
@@ -45,6 +56,8 @@ export async function runCli(argv: string[]): Promise<void> {
       return flags();
     case "secrets":
       return secrets();
+    case "flow":
+      return flow(rest);
     case "enable":
       return toggle(rest, true);
     case "disable":
@@ -171,6 +184,68 @@ function secrets(): void {
   }
   for (const s of all) {
     console.log(`${s.shadowed ? "·" : " "} ${s.name.padEnd(24)} ${s.source}${s.shadowed ? " (shadowed)" : ""}`);
+  }
+}
+
+const STATUS_GLYPH: Record<StepReport["status"], string> = { pass: "✓", fail: "✗", error: "✗", skip: "·" };
+
+/** One line per step, indented by nesting depth, then the verdict. */
+export function renderFlowReport(report: FlowReport): string {
+  const lines = [`Flow "${report.flow}" (${report.steps.length} steps)`];
+  for (const step of report.steps) {
+    const indent = "  ".repeat(step.depth ?? 0);
+    const target = step.target ? ` ${step.target}` : "";
+    const reason = step.reason ? ` — ${step.reason}` : "";
+    const warning = step.warning ? ` ⚠ ${step.warning}` : "";
+    const time = step.status === "skip" ? "" : ` (${step.durationMs}ms)`;
+    lines.push(`[${step.index + 1}] ${STATUS_GLYPH[step.status]} ${indent}${step.kind}${target}${reason}${warning}${time}`);
+  }
+  lines.push(
+    `${report.ok ? "PASS" : "FAIL"} — ${report.passed} passed, ${report.failed} failed, ${report.errored} errored, ${report.skipped} skipped`,
+  );
+  return lines.join("\n");
+}
+
+async function flow(rest: string[]): Promise<void> {
+  const [sub, ...args] = rest;
+  if (sub === "list" || sub === undefined) {
+    const flows = listFlows();
+    console.log(flows.length ? flows.join("\n") : "no flows in .maheragent/flows/");
+    return;
+  }
+  if (sub !== "run") {
+    console.error("usage: maheragent flow list | run <name|path> [--update-baselines] [--json]");
+    process.exitCode = 1;
+    return;
+  }
+  const name = args.find((a) => !a.startsWith("--"));
+  if (!name) {
+    console.error("usage: maheragent flow run <name|path> [--update-baselines] [--json]");
+    process.exitCode = 1;
+    return;
+  }
+  // Resolve against *this* cwd: the daemon may have been started elsewhere.
+  const path = resolveFlowPath(name);
+  const client = await ensureToolServer();
+  try {
+    const report = (await client.callTool("flow-run", {
+      path,
+      updateBaselines: args.includes("--update-baselines"),
+    })) as FlowReport & { error?: string; message?: string };
+    if (report.error) {
+      console.error(report.message ?? report.error);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(args.includes("--json") ? JSON.stringify(report, null, 2) : renderFlowReport(report));
+    if (!report.ok) process.exitCode = 1;
+  } catch (err) {
+    if (err instanceof ToolCallError) {
+      console.error(`${err.code ?? "error"}: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
   }
 }
 
