@@ -1,5 +1,6 @@
 // Perception and interaction against a real http origin: shadow DOM, iframes,
-// content elements, find, stale refs. (file:// would do for most of this, but Chromium treats each
+// content elements, find, stale refs, the post-action page view, waits,
+// viewport, tabs. (file:// would do for most of this, but Chromium treats each
 // file:// document as its own origin, which blocks iframe piercing.)
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -60,14 +61,12 @@ after(async () => {
 const describe = async (args = {}) => (await registry.execute("describe", args)).elements;
 const byName = (els, name) => els.find((e) => e.name === name);
 
-const title = async () => (await registry.execute("describe", {})).title;
-
 test("describe pierces open shadow roots and the Ref is clickable", async () => {
   const els = await describe();
   const shadow = byName(els, "Shadow button");
   assert.ok(shadow, "shadow DOM button listed");
-  await registry.execute("click", { ref: shadow.ref });
-  assert.equal(await title(), "shadow clicked");
+  const view = await registry.execute("click", { ref: shadow.ref });
+  assert.equal(view.title, "shadow clicked");
 });
 
 test("describe pierces same-origin iframes and tags elements with their frame", async () => {
@@ -79,8 +78,8 @@ test("describe pierces same-origin iframes and tags elements with their frame", 
   assert.equal(inner.frame, frame.ref, "element carries the iframe's Ref");
   // Boxes are in top-viewport coordinates: the button sits inside the iframe's box.
   assert.ok(inner.box.x >= frame.box.x && inner.box.y >= frame.box.y);
-  await registry.execute("click", { ref: inner.ref });
-  assert.equal(await title(), "frame clicked");
+  const view = await registry.execute("click", { ref: inner.ref });
+  assert.equal(view.title, "frame clicked");
 });
 
 test("content: true lists text and images so conformance can measure them", async () => {
@@ -107,8 +106,8 @@ test("find tags by selector or text without invalidating earlier Refs", async ()
   assert.equal(byText.length, 1);
   assert.equal(byText[0].name, "friend");
 
-  const result = await registry.execute("click", { ref: toggleRef });
-  assert.equal(result.ok, true, "the earlier Ref still resolves after find");
+  const view = await registry.execute("click", { ref: toggleRef, observe: false });
+  assert.equal(view.ok, true, "the earlier Ref still resolves after find");
 });
 
 test("re-describe never leaves two elements sharing a Ref", async () => {
@@ -117,22 +116,65 @@ test("re-describe never leaves two elements sharing a Ref", async () => {
   const els = await describe();
   assert.ok(byName(els, "B"), "B visible after the toggle in the previous test");
   assert.ok(!byName(els, "A"), "A hidden");
-  await registry.execute("click", { ref: byName(els, "B").ref });
-  assert.equal(await title(), "B clicked");
+  const view = await registry.execute("click", { ref: byName(els, "B").ref });
+  assert.equal(view.title, "B clicked");
 });
 
 test("password values never leave the page as text", async () => {
   const pw = byName(await describe(), "Password");
-  await registry.execute("type", { ref: pw.ref, text: "s3cret!" });
+  await registry.execute("type", { ref: pw.ref, text: "s3cret!", observe: false });
   assert.equal(byName(await describe(), "Password").value, "***");
+});
+
+test("interactions return the page after the action; observe:false skips it", async () => {
+  const els = await describe();
+  const view = await registry.execute("hover", { ref: byName(els, "Toggle").ref });
+  assert.equal(view.ok, true);
+  assert.equal(view.title, "B clicked");
+  assert.ok(Array.isArray(view.elements) && view.elements.length > 0);
+  const bare = await registry.execute("hover", { ref: byName(els, "Toggle").ref, observe: false });
+  assert.deepEqual(bare, { ok: true });
+});
+
+test("wait-for blocks until the element appears, and idle waits for a quiet DOM", async () => {
+  const els = await describe();
+  await registry.execute("click", { ref: byName(els, "Show late").ref, observe: false });
+  const view = await registry.execute("wait-for", { text: "Late content" });
+  assert.ok(view.waitedMs >= 200, `waited ${view.waitedMs}ms for the delayed reveal`);
+  assert.ok(view.elements.length > 0, "comes with the post-wait page view");
+
+  const idle = await registry.execute("wait-for", { idle: true, observe: false });
+  assert.equal(idle.settled, true);
+
+  await assert.rejects(
+    registry.execute("wait-for", { selector: "#nope", timeoutMs: 300 }),
+    /Timed out after 300ms/,
+  );
 });
 
 test("a stale Ref fails fast instead of waiting out the actionability timeout", async () => {
   const els = await describe();
   const ref = byName(els, "Toggle").ref;
-  await registry.execute("navigate", { url: "about:blank" });
+  await registry.execute("navigate", { url: "about:blank", observe: false });
   const start = Date.now();
   await assert.rejects(registry.execute("click", { ref }), (err) => err instanceof StaleRefError);
   assert.ok(Date.now() - start < 3000, "no 30s wait");
-  await registry.execute("navigate", { url: `${base}/` });
+  await registry.execute("navigate", { url: `${base}/`, observe: false });
+});
+
+test("set-viewport resizes the page and emulates a color scheme", async () => {
+  const view = await registry.execute("set-viewport", { width: 500, height: 400, colorScheme: "dark" });
+  assert.deepEqual(
+    { width: view.viewport.width, height: view.viewport.height, colorScheme: view.viewport.colorScheme },
+    { width: 500, height: 400, colorScheme: "dark" },
+  );
+  await registry.execute("set-viewport", { width: 1280, height: 720, colorScheme: "light", observe: false });
+});
+
+test("screenshot by Ref crops to the element", async () => {
+  const swatch = (await registry.execute("find", { selector: "#swatch" })).elements[0];
+  const shot = await registry.execute("screenshot", { ref: swatch.ref });
+  const png = Buffer.from(shot.base64, "base64");
+  // IHDR width is the big-endian uint32 at byte 16.
+  assert.equal(png.readUInt32BE(16), 20);
 });

@@ -1,11 +1,15 @@
 // Tool registrations. Each Tool is a named, agent-callable operation with a typed
 // input schema; it declares the Services it needs and the Registry resolves them.
 //
-//   perception:   navigate, describe, find, screenshot
+//   perception:   navigate, describe, find, wait-for, screenshot, set-viewport
 //   interaction:  click, type, hover, scroll, press-key
-//   conformance:  extract-styles, compare-styles   (grounding + deterministic diff)
+//   conformance:  extract-styles, compare-styles
 //   diagnostics:  get-console-logs, get-network-log
 //   performance:  profile-performance   (Core Web Vitals via in-page APIs)
+//
+// Every interaction returns the page *after* the action — url, title, and a
+// fresh element list — so the agent's next step needs no separate `describe`.
+// Pass `observe: false` (or enable the `disable-auto-describe` flag) to skip it.
 
 import { z } from "zod";
 import {
@@ -14,23 +18,52 @@ import {
   type AnyToolDefinition,
   type Registry,
 } from "@ramisalem/registry";
-import { browserSessionBlueprint } from "../blueprints/browser-session.js";
+import { isFlagEnabled } from "@ramisalem/configuration-core";
+import {
+  browserSessionBlueprint,
+  type BrowserSession,
+  type PageView,
+} from "../blueprints/browser-session.js";
 import { compareStyles } from "../conformance.js";
+
+/** Flag that turns off the element list appended to every action's result. */
+export const AUTO_DESCRIBE_FLAG = "disable-auto-describe";
 
 /** Shared arg: which Browser Session to act on (defaults to a single session). */
 const sessionArg = z.string().optional();
+/** Shared arg: whether to append the post-action page view (default true). */
+const observeArg = z.boolean().optional();
+
+const OBSERVE_NOTE =
+  "Returns the page after the action: `url`, `title`, and the fresh `elements` list (plus `openedTabs` if the action opened a tab). Pass `observe: false` to skip that.";
 
 /** Resolve the BrowserSession dependency for a tool call. */
 const browserOf = (session?: string) => ({
   browser: ref(browserSessionBlueprint, { sessionId: session ?? "default" }),
 });
 
+/** An action result, with the post-action page view unless opted out. */
+async function observed<T extends object>(
+  browser: BrowserSession,
+  observe: boolean | undefined,
+  extra: T,
+): Promise<{ ok: true } & T & Partial<PageView>> {
+  const base = { ok: true as const, ...extra };
+  if (observe === false || isFlagEnabled(AUTO_DESCRIBE_FLAG)) return base;
+  return { ...base, ...(await browser.observe()) };
+}
+
+// ── Perception ──────────────────────────────────────────────────────────────
+
 const navigate = defineTool({
   name: "navigate",
-  description: "Navigate the browser to a URL and return the resulting page state.",
-  input: z.object({ url: z.string().url(), session: sessionArg }),
+  description: `Navigate the browser to a URL. ${OBSERVE_NOTE}`,
+  input: z.object({ url: z.string().url(), observe: observeArg, session: sessionArg }),
   services: (args) => browserOf(args.session),
-  execute: (args, { browser }) => browser.navigate(args.url),
+  execute: async (args, { browser }) => {
+    const state = await browser.navigate(args.url);
+    return observed(browser, args.observe, state);
+  },
 });
 
 const describe = defineTool({
@@ -66,29 +99,76 @@ const find = defineTool({
     browser.find({ selector: args.selector, text: args.text, maxElements: args.maxElements }),
 });
 
+const waitFor = defineTool({
+  name: "wait-for",
+  description: `Wait for an element (by \`ref\`, CSS \`selector\`, or visible \`text\`) to reach a \`state\` — visible (default), hidden, attached, detached — and/or for the page to go idle (\`idle: true\`: no DOM mutations for \`stableMs\`). Use this instead of polling with describe or screenshot. Element waits fail after \`timeoutMs\` (default 10000); an idle wait reports \`settled: false\` instead. ${OBSERVE_NOTE}`,
+  input: z
+    .object({
+      ref: z.string().optional(),
+      selector: z.string().optional(),
+      text: z.string().optional(),
+      state: z.enum(["visible", "hidden", "attached", "detached"]).optional(),
+      idle: z.boolean().optional(),
+      stableMs: z.number().int().min(50).max(10000).optional(),
+      timeoutMs: z.number().int().min(100).max(120000).optional(),
+      observe: observeArg,
+      session: sessionArg,
+    })
+    .refine((v) => v.ref != null || v.selector != null || v.text != null || v.idle === true, {
+      message: "Provide `ref`, `selector`, or `text` to wait on, or `idle: true`.",
+    }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    const result = await browser.waitFor(args);
+    return observed(browser, args.observe, result);
+  },
+});
+
 const screenshot = defineTool({
   name: "screenshot",
   description:
-    "Capture a PNG of the current page. Returns base64 by default, or pass `path` to write the PNG to disk and return the path (cheaper for the agent than decoding base64).",
+    "Capture a PNG of the current page, or of one element by `ref`. Returned as an image the model can look at, or pass `path` to write the PNG to disk and get the path back instead.",
   input: z.object({
     fullPage: z.boolean().default(false),
+    ref: z.string().optional(),
     path: z.string().optional(),
     session: sessionArg,
   }),
   services: (args) => browserOf(args.session),
-  execute: (args, { browser }) => browser.screenshot({ fullPage: args.fullPage, path: args.path }),
+  execute: (args, { browser }) =>
+    browser.screenshot({ fullPage: args.fullPage, path: args.path, ref: args.ref }),
 });
+
+const setViewport = defineTool({
+  name: "set-viewport",
+  description: `Resize the viewport (\`width\`/\`height\` in CSS px — match the Figma frame's width before a conformance check) and/or emulate \`colorScheme\` (light|dark) and \`reducedMotion\`. The session starts at 1280x720. ${OBSERVE_NOTE}`,
+  input: z.object({
+    width: z.number().int().min(100).max(10000).optional(),
+    height: z.number().int().min(100).max(10000).optional(),
+    colorScheme: z.enum(["light", "dark", "no-preference"]).optional(),
+    reducedMotion: z.enum(["reduce", "no-preference"]).optional(),
+    observe: observeArg,
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: async (args, { browser }) => {
+    const viewport = await browser.setViewport(args);
+    return observed(browser, args.observe, { viewport });
+  },
+});
+
+// ── Interaction ─────────────────────────────────────────────────────────────
 
 const click = defineTool({
   name: "click",
-  description:
-    'Click an element by its Element Ref, or fall back to viewport coordinates (x, y). If a click visibly focuses the element but its handler never fires (typical inside virtualized data grids, whose cells re-render between mousedown and mouseup), retry with `mode: "js"` — it dispatches el.click() programmatically and is immune to that race. Signature of the race: the element gains a focus ring, yet nothing navigates/opens. A Ref that is no longer on the page fails immediately with `stale_ref`: describe again.',
+  description: `Click an element by its Element Ref, or fall back to viewport coordinates (x, y). If a click visibly focuses the element but its handler never fires (typical inside virtualized data grids, whose cells re-render between mousedown and mouseup), retry with \`mode: "js"\` — it dispatches el.click() programmatically and is immune to that race. A Ref that is no longer on the page fails immediately with \`stale_ref\`: describe again. ${OBSERVE_NOTE}`,
   input: z
     .object({
       ref: z.string().optional(),
       mode: z.enum(["native", "js"]).optional(),
       x: z.number().optional(),
       y: z.number().optional(),
+      observe: observeArg,
       session: sessionArg,
     })
     .refine((v) => (v.ref != null) !== (v.x != null && v.y != null), {
@@ -102,64 +182,68 @@ const click = defineTool({
     await browser.click(
       args.ref != null ? { ref: args.ref, mode: args.mode } : { x: args.x!, y: args.y! },
     );
-    return { ok: true };
+    return observed(browser, args.observe, {});
   },
 });
 
 const type = defineTool({
   name: "type",
-  description: "Type text into a field by Element Ref (replacing its contents by default).",
+  description: `Type text into a field by Element Ref, replacing its contents by default (\`clear: false\` appends); \`submit: true\` presses Enter afterwards. ${OBSERVE_NOTE}`,
   input: z.object({
     ref: z.string(),
     text: z.string(),
     clear: z.boolean().default(true),
+    submit: z.boolean().optional(),
+    observe: observeArg,
     session: sessionArg,
   }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
-    await browser.type(args.ref, args.text, { clear: args.clear });
-    return { ok: true };
+    await browser.type(args.ref, args.text, { clear: args.clear, submit: args.submit });
+    return observed(browser, args.observe, {});
   },
 });
 
 const hover = defineTool({
   name: "hover",
-  description: "Hover the pointer over an element by Element Ref.",
-  input: z.object({ ref: z.string(), session: sessionArg }),
+  description: `Hover the pointer over an element by Element Ref (opens hover menus and tooltips). ${OBSERVE_NOTE}`,
+  input: z.object({ ref: z.string(), observe: observeArg, session: sessionArg }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
     await browser.hover(args.ref);
-    return { ok: true };
+    return observed(browser, args.observe, {});
   },
 });
 
 const scroll = defineTool({
   name: "scroll",
-  description:
-    "Scroll an element into view by Element Ref, or scroll the page by (dx, dy) pixels.",
+  description: `Scroll: \`ref\` alone brings the element into view; \`ref\` with \`dx\`/\`dy\` scrolls *inside* that element (lists, panes); \`dx\`/\`dy\` alone scrolls the page by that many pixels. ${OBSERVE_NOTE}`,
   input: z.object({
     ref: z.string().optional(),
     dx: z.number().default(0),
     dy: z.number().default(0),
+    observe: observeArg,
     session: sessionArg,
   }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
     await browser.scroll({ ref: args.ref, dx: args.dx, dy: args.dy });
-    return { ok: true };
+    return observed(browser, args.observe, {});
   },
 });
 
 const pressKey = defineTool({
   name: "press-key",
-  description: 'Press a key (e.g. "Enter", "Escape", "Tab", "ArrowDown").',
-  input: z.object({ key: z.string(), session: sessionArg }),
+  description: `Press a key or chord, e.g. "Enter", "Escape", "Tab", "ArrowDown", "Control+a", "Shift+Tab". ${OBSERVE_NOTE}`,
+  input: z.object({ key: z.string(), observe: observeArg, session: sessionArg }),
   services: (args) => browserOf(args.session),
   execute: async (args, { browser }) => {
     await browser.pressKey(args.key);
-    return { ok: true };
+    return observed(browser, args.observe, {});
   },
 });
+
+// ── Conformance ─────────────────────────────────────────────────────────────
 
 const extractStyles = defineTool({
   name: "extract-styles",
@@ -205,10 +289,12 @@ const compareStylesTool = defineTool({
   },
 });
 
+// ── Diagnostics & performance ───────────────────────────────────────────────
+
 const getConsoleLogs = defineTool({
   name: "get-console-logs",
   description:
-    "Return console messages and uncaught page errors captured since the session started. Optionally filter by level (e.g. \"error\") and clear the buffer.",
+    "Return console messages and uncaught page errors captured since the session started, across every tab, each with a source `location` when known. Optionally filter by level (e.g. \"error\") and clear the buffer.",
   input: z.object({
     level: z.string().optional(),
     clear: z.boolean().optional(),
@@ -217,18 +303,6 @@ const getConsoleLogs = defineTool({
   services: (args) => browserOf(args.session),
   execute: (args, { browser }) =>
     browser.getConsoleLogs({ level: args.level, clear: args.clear }),
-});
-
-const profilePerformance = defineTool({
-  name: "profile-performance",
-  description:
-    "Profile the current page's performance — Core Web Vitals (LCP, CLS, FCP), estimated Total Blocking Time, navigation timing, and a resource summary. Navigate to the page first; metrics come from the loaded document's buffered performance entries.",
-  input: z.object({
-    settleMs: z.number().int().min(0).max(10000).optional(),
-    session: sessionArg,
-  }),
-  services: (args) => browserOf(args.session),
-  execute: (args, { browser }) => browser.profilePerformance({ settleMs: args.settleMs }),
 });
 
 const getNetworkLog = defineTool({
@@ -250,12 +324,26 @@ const getNetworkLog = defineTool({
     }),
 });
 
+const profilePerformance = defineTool({
+  name: "profile-performance",
+  description:
+    "Profile the current page's performance — Core Web Vitals (LCP, CLS, FCP), estimated Total Blocking Time, navigation timing, and a resource summary. Navigate to the page first; metrics come from the loaded document's buffered performance entries.",
+  input: z.object({
+    settleMs: z.number().int().min(0).max(10000).optional(),
+    session: sessionArg,
+  }),
+  services: (args) => browserOf(args.session),
+  execute: (args, { browser }) => browser.profilePerformance({ settleMs: args.settleMs }),
+});
+
 /** Every tool the tool-server exposes. */
 export const coreTools: AnyToolDefinition[] = [
   navigate,
   describe,
   find,
+  waitFor,
   screenshot,
+  setViewport,
   click,
   type,
   hover,

@@ -44,7 +44,11 @@ export interface DescribedElement {
   checked?: boolean;
 }
 
-/** What the agent sees after perceiving: the page state plus a fresh element list. */
+/**
+ * What the agent sees after perceiving or acting: the page state plus a fresh
+ * element list. Interaction tools return this too, so the next action needs no
+ * separate `describe` round-trip.
+ */
 export interface PageView {
   url: string;
   title: string;
@@ -111,6 +115,49 @@ export interface FindOptions {
   /** Case-insensitive substring of the element's own text or accessible name. */
   text?: string;
   maxElements?: number;
+}
+
+export interface SettleOptions {
+  /** How long the DOM must stay unchanged to count as settled. */
+  stableMs?: number;
+  /** Give up (without failing) after this long. */
+  timeoutMs?: number;
+}
+
+export interface SettleResult {
+  settled: boolean;
+  waitedMs: number;
+}
+
+export interface WaitForOptions {
+  ref?: string;
+  selector?: string;
+  text?: string;
+  state?: "visible" | "hidden" | "attached" | "detached";
+  /** Wait for the DOM to stop changing instead of (or after) an element. */
+  idle?: boolean;
+  stableMs?: number;
+  timeoutMs?: number;
+}
+
+export interface WaitForResult {
+  waitedMs: number;
+  /** Only when `idle` was requested: false means the page never settled within the timeout. */
+  settled?: boolean;
+}
+
+export interface ViewportOptions {
+  width?: number;
+  height?: number;
+  colorScheme?: "light" | "dark" | "no-preference";
+  reducedMotion?: "reduce" | "no-preference";
+}
+
+export interface ViewportState {
+  width: number;
+  height: number;
+  colorScheme?: string;
+  reducedMotion?: string;
 }
 
 /** A captured console message or uncaught page error. */
@@ -215,6 +262,12 @@ export interface BrowserSession {
   describe(opts?: DescribeOptions): Promise<PageView>;
   /** Tag and return the elements matching a selector and/or text, keeping existing Refs valid. */
   find(opts: FindOptions): Promise<PageView>;
+  /** Wait briefly for the DOM to stop changing, then describe. What interaction tools return. */
+  observe(): Promise<PageView>;
+  /** Wait for the DOM to stop changing. Never throws; reports whether it settled. */
+  settle(opts?: SettleOptions): Promise<SettleResult>;
+  /** Wait for an element state or for the page to go idle. Throws on timeout (except `idle`). */
+  waitFor(opts: WaitForOptions): Promise<WaitForResult>;
   screenshot(opts?: { fullPage?: boolean; path?: string; ref?: string }): Promise<Screenshot>;
   click(target: ClickTarget): Promise<void>;
   type(ref: string, text: string, opts?: TypeOptions): Promise<void>;
@@ -234,6 +287,8 @@ export interface BrowserSession {
     ref: string,
     opts?: { properties?: string[]; closest?: string },
   ): Promise<ComputedStyles | null>;
+  /** Resize the viewport and/or emulate a color scheme or reduced motion. */
+  setViewport(opts: ViewportOptions): Promise<ViewportState>;
   /** Console messages + page errors captured since the session started (ring-buffered). */
   getConsoleLogs(query?: ConsoleLogQuery): Promise<ConsoleEntry[]>;
   /** Network responses + failed requests captured since the session started (ring-buffered). */
@@ -634,6 +689,41 @@ function extractStylesFromElement(
 }
 
 /**
+ * Runs *in the page*. Resolves once the DOM has gone `stableMs` without a
+ * mutation, or after `timeoutMs` (reporting `settled: false`). Frameworks
+ * re-render asynchronously after an action, so an element list read the
+ * instant a click returns often describes the *old* screen.
+ */
+function settleInPage(args: { stableMs: number; timeoutMs: number }): Promise<SettleResult> {
+  return new Promise((resolve) => {
+    const start = performance.now();
+    let last = start;
+    const observer = new MutationObserver(() => {
+      last = performance.now();
+    });
+    observer.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    const tick = (): void => {
+      const now = performance.now();
+      if (now - last >= args.stableMs) {
+        observer.disconnect();
+        resolve({ settled: true, waitedMs: Math.round(now - start) });
+      } else if (now - start >= args.timeoutMs) {
+        observer.disconnect();
+        resolve({ settled: false, waitedMs: Math.round(now - start) });
+      } else {
+        setTimeout(tick, 40);
+      }
+    };
+    setTimeout(tick, 40);
+  });
+}
+
+/**
  * Runs *in the page*. Collects Core Web Vitals from buffered performance
  * entries (LCP, CLS, long tasks) plus navigation/paint/resource timing, after a
  * short settle so observers can replay history. Self-contained — serialized
@@ -705,7 +795,14 @@ function profilePerformanceInPage(settleMs: number): Promise<PerformanceReport> 
   });
 }
 
+/** Errors Playwright raises when the page navigated out from under an evaluate. */
+function isContextGone(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /Execution context was destroyed|Target closed|navigation/i.test(message);
+}
+
 const DEFAULT_MAX_ELEMENTS = 2000;
+const OBSERVE_SETTLE: Required<SettleOptions> = { stableMs: 150, timeoutMs: 1500 };
 
 function createSession(browser: Browser, context: BrowserContext, first: Page): BrowserSession {
   // Diagnostics: capture console + network into bounded ring buffers shared by
@@ -813,6 +910,26 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
     return view;
   }
 
+  async function settle(opts?: SettleOptions): Promise<SettleResult> {
+    const args = { stableMs: opts?.stableMs ?? 200, timeoutMs: opts?.timeoutMs ?? 2000 };
+    try {
+      return await active.evaluate(settleInPage, args);
+    } catch (err) {
+      if (!isContextGone(err)) throw err;
+      // The action triggered a navigation: wait for the new document, then
+      // measure stability there.
+      await active.waitForLoadState("domcontentloaded").catch(() => undefined);
+      try {
+        return await active.evaluate(settleInPage, args);
+      } catch {
+        return { settled: false, waitedMs: 0 };
+      }
+    }
+  }
+
+  // Emulation state is not readable back from Playwright, so it is tracked here.
+  const emulation: { colorScheme?: string; reducedMotion?: string } = {};
+
   return {
     async navigate(url) {
       await active.goto(url, { waitUntil: "domcontentloaded" });
@@ -836,6 +953,41 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
         text: opts.text,
         maxElements: opts.maxElements ?? DEFAULT_MAX_ELEMENTS,
       });
+    },
+    async observe() {
+      await settle(OBSERVE_SETTLE);
+      return walk({ mode: "describe", content: false, maxElements: DEFAULT_MAX_ELEMENTS });
+    },
+    settle,
+    async waitFor(opts) {
+      const start = Date.now();
+      const timeout = opts.timeoutMs ?? 10_000;
+      const state = opts.state ?? "visible";
+      let target: Locator | undefined;
+      if (opts.ref) target = locatorFor(opts.ref);
+      else if (opts.selector) target = active.locator(opts.selector).first();
+      else if (opts.text !== undefined) target = active.getByText(opts.text).first();
+      if (!target && !opts.idle) {
+        throw new Error("wait-for needs a `ref`, `selector`, or `text` to wait on, or `idle: true`.");
+      }
+      if (target) {
+        try {
+          await target.waitFor({ state, timeout });
+        } catch (err) {
+          const what = opts.ref ?? opts.selector ?? JSON.stringify(opts.text);
+          throw new Error(
+            `Timed out after ${timeout}ms waiting for ${what} to be ${state}. ${err instanceof Error ? err.message.split("\n")[0] : ""}`.trim(),
+          );
+        }
+      }
+      const result: WaitForResult = { waitedMs: 0 };
+      if (opts.idle) {
+        const remaining = Math.max(250, timeout - (Date.now() - start));
+        const settled = await settle({ stableMs: opts.stableMs ?? 300, timeoutMs: remaining });
+        result.settled = settled.settled;
+      }
+      result.waitedMs = Date.now() - start;
+      return result;
     },
     async screenshot(opts) {
       const shotOptions = opts?.path ? { path: opts.path } : {};
@@ -909,6 +1061,25 @@ function createSession(browser: Browser, context: BrowserContext, first: Page): 
         extra: opts?.properties ?? [],
         closest: opts?.closest,
       });
+    },
+    async setViewport(opts) {
+      if (opts.width !== undefined || opts.height !== undefined) {
+        const current = active.viewportSize() ?? { width: 1280, height: 720 };
+        await active.setViewportSize({
+          width: opts.width ?? current.width,
+          height: opts.height ?? current.height,
+        });
+      }
+      if (opts.colorScheme !== undefined || opts.reducedMotion !== undefined) {
+        await active.emulateMedia({
+          ...(opts.colorScheme !== undefined ? { colorScheme: opts.colorScheme } : {}),
+          ...(opts.reducedMotion !== undefined ? { reducedMotion: opts.reducedMotion } : {}),
+        });
+        if (opts.colorScheme !== undefined) emulation.colorScheme = opts.colorScheme;
+        if (opts.reducedMotion !== undefined) emulation.reducedMotion = opts.reducedMotion;
+      }
+      const size = active.viewportSize() ?? { width: 0, height: 0 };
+      return { ...size, ...emulation };
     },
     async getConsoleLogs(query) {
       const level = query?.level === "warn" ? "warning" : query?.level;

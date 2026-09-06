@@ -23,6 +23,12 @@ export type {
   PageView,
   PerformanceReport,
   Screenshot,
+  SettleOptions,
+  SettleResult,
+  ViewportOptions,
+  ViewportState,
+  WaitForOptions,
+  WaitForResult,
 } from "./blueprints/browser-session.js";
 export {
   compareStyles,
@@ -30,7 +36,7 @@ export {
   type StyleComparison,
   type CompareOptions,
 } from "./conformance.js";
-export { coreTools, registerCoreTools } from "./tools/index.js";
+export { coreTools, registerCoreTools, AUTO_DESCRIBE_FLAG } from "./tools/index.js";
 export { createHttpServer } from "./http.js";
 export {
   clearDaemonInfo,

@@ -69,3 +69,10 @@ test("MCP CallTool delivers a screenshot as an image block, not base64 text", as
     if (c.type === "text") assert.ok(!c.text.includes("iVBORw0KGgo"), "no base64 in text blocks");
   }
 });
+
+test("MCP CallTool passes a page view through as text", async () => {
+  const res = await client.callTool({ name: "describe", arguments: {} });
+  const view = JSON.parse(res.content[0].text);
+  assert.equal(view.title, "Home");
+  assert.ok(Array.isArray(view.elements));
+});
