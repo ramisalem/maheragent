@@ -7,11 +7,14 @@ import {
   ALL_ADAPTERS,
   getAdapterByName,
   getMcpEntry,
+  getFigmaEntry,
   getSkillTargets,
   addClaudePermission,
   copySkillsToTargets,
   MCP_SERVER_KEY,
   MCP_BINARY_NAME,
+  FIGMA_SERVER_KEY,
+  FIGMA_MCP_URL,
 } from "@ramisalem/installer";
 
 let root;
@@ -55,6 +58,30 @@ test("Claude adapter writes JSON with type:stdio and preserves other servers", (
   assert.equal(adapter.hasEntry(p), true);
   assert.equal(adapter.remove(p), true);
   assert.ok(!JSON.parse(read(p)).mcpServers?.[MCP_SERVER_KEY]);
+});
+
+test("getFigmaEntry bridges the Dev Mode URL server via mcp-remote", () => {
+  const entry = getFigmaEntry();
+  assert.equal(entry.command, "npx");
+  assert.deepEqual(entry.args, ["-y", "mcp-remote", FIGMA_MCP_URL]);
+});
+
+test("adapters register the Figma server alongside maheragent under a distinct key", () => {
+  const adapter = getAdapterByName("claude code");
+  const p = join(root, "figma-companion.json");
+  writeFileSync(p, JSON.stringify({ mcpServers: {} }));
+  adapter.write(p, getMcpEntry());
+  adapter.write(p, getFigmaEntry(), FIGMA_SERVER_KEY);
+  const cfg = JSON.parse(read(p));
+  // both servers coexist
+  assert.equal(cfg.mcpServers[MCP_SERVER_KEY].command, MCP_BINARY_NAME);
+  assert.equal(cfg.mcpServers[FIGMA_SERVER_KEY].command, "npx");
+  assert.ok(cfg.mcpServers[FIGMA_SERVER_KEY].args.includes("mcp-remote"));
+  assert.equal(adapter.hasEntry(p, FIGMA_SERVER_KEY), true);
+  // removing Figma leaves maheragent intact
+  assert.equal(adapter.remove(p, FIGMA_SERVER_KEY), true);
+  assert.ok(!JSON.parse(read(p)).mcpServers[FIGMA_SERVER_KEY]);
+  assert.ok(JSON.parse(read(p)).mcpServers[MCP_SERVER_KEY]);
 });
 
 test("VS Code adapter uses the `servers` key", () => {

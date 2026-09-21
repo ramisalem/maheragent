@@ -6,3 +6,7 @@ dist/
 
 # packed tarballs
 *.tgz
+
+BENCHMARK.md
+STATUS.md
+benchmark.mjs

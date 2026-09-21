@@ -67,3 +67,11 @@ test("malformed JSON body -> 400", async () => {
   assert.equal(res.status, 400);
   assert.equal((await res.json()).error, "invalid_json");
 });
+
+test("a Ref that is not on the page -> 409 stale_ref", async () => {
+  const res = await postJson("click", { ref: "e999" }, auth());
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.error, "stale_ref");
+  assert.match(body.message, /describe/);
+});

@@ -12,6 +12,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ToolCallError, type ToolServerClient } from "./client.js";
+import { toContent } from "./content.js";
 
 export interface McpServerInfo {
   name: string;
@@ -43,7 +44,7 @@ export function createMcpServer(client: ToolServerClient, info: McpServerInfo): 
     const { name, arguments: args } = req.params;
     try {
       const result = await client.callTool(name, args ?? {});
-      return { content: [{ type: "text", text: stringify(result) }] };
+      return { content: toContent(result) };
     } catch (err) {
       // Surface tool failures to the model as an error result, not a transport
       // fault — the agent should see what went wrong and adapt.
@@ -64,10 +65,4 @@ export function createMcpServer(client: ToolServerClient, info: McpServerInfo): 
 export async function connectStdio(server: Server): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-}
-
-function stringify(value: unknown): string {
-  if (value === undefined) return "null";
-  if (typeof value === "string") return value;
-  return JSON.stringify(value, null, 2);
 }

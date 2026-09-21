@@ -14,6 +14,7 @@ import {
   MCP_BINARY_NAME,
   PERMISSION_RULE,
   CURSOR_ALLOWLIST_PATTERN,
+  FIGMA_MCP_URL,
 } from "./constants.js";
 import {
   dirExists,
@@ -45,11 +46,12 @@ export interface McpConfigAdapter {
   projectPath(root: string): string | null;
   /** Config file for global scope, or null if the editor has none. */
   globalPath(): string | null;
-  write(configPath: string, entry: McpServerEntry): void;
-  /** Remove our entry; returns true if something was removed. */
-  remove(configPath: string): boolean;
-  /** Non-mutating: is our server already configured here? */
-  hasEntry(configPath: string): boolean;
+  /** Write a server entry under `key` (defaults to the maheragent server). */
+  write(configPath: string, entry: McpServerEntry, key?: string): void;
+  /** Remove the entry under `key`; returns true if something was removed. */
+  remove(configPath: string, key?: string): boolean;
+  /** Non-mutating: is the server under `key` already configured here? */
+  hasEntry(configPath: string, key?: string): boolean;
   addAllowlist?(root: string, scope: AllowlistScope): void;
   removeAllowlist?(root: string, scope: AllowlistScope): void;
 }
@@ -57,6 +59,16 @@ export interface McpConfigAdapter {
 /** The portable entry editors launch — binary name, not an absolute path. */
 export function getMcpEntry(): McpServerEntry {
   return { command: MCP_BINARY_NAME, args: ["mcp"] };
+}
+
+/**
+ * The Figma Dev Mode server entry. It's a local URL server (Figma desktop app),
+ * so we bridge it to stdio with `mcp-remote` — a single command/args shape that
+ * every editor adapter can register, including those without native URL-server
+ * support. Requires the Figma desktop app running with Dev Mode MCP enabled.
+ */
+export function getFigmaEntry(): McpServerEntry {
+  return { command: "npx", args: ["-y", "mcp-remote", FIGMA_MCP_URL] };
 }
 
 function hasEnv(entry: McpServerEntry): entry is McpServerEntry & { env: Record<string, string> } {
@@ -89,26 +101,26 @@ function makeJsonAdapter(spec: JsonAdapterSpec): McpConfigAdapter {
     detect: spec.detect,
     projectPath: (root) => spec.projectFile?.(root) ?? null,
     globalPath: () => spec.globalFile?.() ?? null,
-    write(configPath, entry) {
+    write(configPath, entry, key = MCP_SERVER_KEY) {
       const config = readJson(configPath);
       const servers = (config[spec.key] ?? {}) as Record<string, unknown>;
-      servers[MCP_SERVER_KEY] = buildEntry(entry);
+      servers[key] = buildEntry(entry);
       config[spec.key] = servers;
       writeJson(configPath, config);
     },
-    remove(configPath) {
+    remove(configPath, key = MCP_SERVER_KEY) {
       if (!fs.existsSync(configPath)) return false;
       const config = readJson(configPath);
       const servers = config[spec.key] as Record<string, unknown> | undefined;
-      if (!servers?.[MCP_SERVER_KEY]) return false;
-      delete servers[MCP_SERVER_KEY];
+      if (!servers?.[key]) return false;
+      delete servers[key];
       writeJsonOrRemove(configPath, config);
       return true;
     },
-    hasEntry(configPath) {
+    hasEntry(configPath, key = MCP_SERVER_KEY) {
       if (!fs.existsSync(configPath)) return false;
       const servers = readJson(configPath)[spec.key] as Record<string, unknown> | undefined;
-      return Boolean(servers?.[MCP_SERVER_KEY]);
+      return Boolean(servers?.[key]);
     },
   };
 }
@@ -278,25 +290,25 @@ const zedAdapter: McpConfigAdapter = {
   detect: () => dirExists(path.join(homedir(), ".config", "zed")),
   projectPath: (root) => path.join(root, ".zed", "settings.json"),
   globalPath: () => path.join(homedir(), ".config", "zed", "settings.json"),
-  write(configPath, entry) {
-    editJsoncFile(configPath, ["context_servers", MCP_SERVER_KEY], {
+  write(configPath, entry, key = MCP_SERVER_KEY) {
+    editJsoncFile(configPath, ["context_servers", key], {
       source: "custom",
       command: entry.command,
       args: entry.args,
       ...(hasEnv(entry) ? { env: entry.env } : {}),
     });
   },
-  remove(configPath) {
+  remove(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const servers = readJsonc(configPath).context_servers as Record<string, unknown> | undefined;
-    if (!servers?.[MCP_SERVER_KEY]) return false;
-    editJsoncFile(configPath, ["context_servers", MCP_SERVER_KEY], undefined);
+    if (!servers?.[key]) return false;
+    editJsoncFile(configPath, ["context_servers", key], undefined);
     return true;
   },
-  hasEntry(configPath) {
+  hasEntry(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const servers = readJsonc(configPath).context_servers as Record<string, unknown> | undefined;
-    return Boolean(servers?.[MCP_SERVER_KEY]);
+    return Boolean(servers?.[key]);
   },
   addAllowlist(root, scope) {
     const p =
@@ -339,25 +351,25 @@ const opencodeAdapter: McpConfigAdapter = {
   detect: hasOpencodeBinary,
   projectPath: (root) => path.join(root, "opencode.json"),
   globalPath: () => path.join(homedir(), ".config", "opencode", "opencode.json"),
-  write(configPath, entry) {
-    editJsoncFile(configPath, ["mcp", MCP_SERVER_KEY], {
+  write(configPath, entry, key = MCP_SERVER_KEY) {
+    editJsoncFile(configPath, ["mcp", key], {
       type: "local",
       command: [entry.command, ...entry.args],
       enabled: true,
       ...(hasEnv(entry) ? { environment: entry.env } : {}),
     });
   },
-  remove(configPath) {
+  remove(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const servers = readJsonc(configPath).mcp as Record<string, unknown> | undefined;
-    if (!servers?.[MCP_SERVER_KEY]) return false;
-    editJsoncFile(configPath, ["mcp", MCP_SERVER_KEY], undefined);
+    if (!servers?.[key]) return false;
+    editJsoncFile(configPath, ["mcp", key], undefined);
     return true;
   },
-  hasEntry(configPath) {
+  hasEntry(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const servers = readJsonc(configPath).mcp as Record<string, unknown> | undefined;
-    return Boolean(servers?.[MCP_SERVER_KEY]);
+    return Boolean(servers?.[key]);
   },
   addAllowlist(root, scope) {
     const p = scope === "global" ? this.globalPath() : this.projectPath(root);
@@ -381,10 +393,10 @@ const codexAdapter: McpConfigAdapter = {
     dirExists(path.join(homedir(), ".codex")) || dirExists(path.join(process.cwd(), ".codex")),
   projectPath: (root) => path.join(root, ".codex", "config.toml"),
   globalPath: () => path.join(homedir(), ".codex", "config.toml"),
-  write(configPath, entry) {
+  write(configPath, entry, key = MCP_SERVER_KEY) {
     const config = readToml(configPath);
     const servers = (config.mcp_servers ?? {}) as Record<string, unknown>;
-    servers[MCP_SERVER_KEY] = {
+    servers[key] = {
       command: entry.command,
       args: entry.args,
       ...(hasEnv(entry) ? { env: entry.env } : {}),
@@ -392,19 +404,19 @@ const codexAdapter: McpConfigAdapter = {
     config.mcp_servers = servers;
     writeToml(configPath, config);
   },
-  remove(configPath) {
+  remove(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const config = readToml(configPath);
     const servers = config.mcp_servers as Record<string, unknown> | undefined;
-    if (!servers?.[MCP_SERVER_KEY]) return false;
-    delete servers[MCP_SERVER_KEY];
+    if (!servers?.[key]) return false;
+    delete servers[key];
     writeTomlOrRemove(configPath, config);
     return true;
   },
-  hasEntry(configPath) {
+  hasEntry(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const servers = readToml(configPath).mcp_servers as Record<string, unknown> | undefined;
-    return Boolean(servers?.[MCP_SERVER_KEY]);
+    return Boolean(servers?.[key]);
   },
 };
 
@@ -415,34 +427,34 @@ const hermesAdapter: McpConfigAdapter = {
   detect: () => dirExists(path.join(homedir(), ".hermes")),
   projectPath: () => null,
   globalPath: () => path.join(homedir(), ".hermes", "config.yaml"),
-  write(configPath, entry) {
+  write(configPath, entry, key = MCP_SERVER_KEY) {
     const doc = readYaml(configPath);
     const existing = doc.get("mcp_servers");
     if (existing != null && !isMap(existing)) {
       throw new Error(`mcp_servers in ${configPath} is not a YAML mapping`);
     }
     if (existing == null) doc.delete("mcp_servers");
-    doc.setIn(["mcp_servers", MCP_SERVER_KEY], {
+    doc.setIn(["mcp_servers", key], {
       command: entry.command,
       args: entry.args,
       ...(hasEnv(entry) ? { env: entry.env } : {}),
     });
     writeYaml(configPath, doc);
   },
-  remove(configPath) {
+  remove(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const doc = readYaml(configPath);
     const servers = doc.get("mcp_servers");
-    if (!isMap(servers) || !servers.has(MCP_SERVER_KEY)) return false;
-    servers.delete(MCP_SERVER_KEY);
+    if (!isMap(servers) || !servers.has(key)) return false;
+    servers.delete(key);
     if (servers.items.length === 0) doc.delete("mcp_servers");
     writeYaml(configPath, doc);
     return true;
   },
-  hasEntry(configPath) {
+  hasEntry(configPath, key = MCP_SERVER_KEY) {
     if (!fs.existsSync(configPath)) return false;
     const servers = readYaml(configPath).get("mcp_servers");
-    return isMap(servers) && servers.has(MCP_SERVER_KEY);
+    return isMap(servers) && servers.has(key);
   },
 };
 

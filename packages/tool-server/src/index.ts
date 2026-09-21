@@ -3,21 +3,39 @@
 // editor connection so the browser and its state persist across reconnects.
 
 import { randomBytes } from "node:crypto";
-import { Registry, type RegistryOptions } from "@ramisalem/registry";
+import { z } from "zod";
+import { defineTool, Registry, type RegistryOptions } from "@ramisalem/registry";
 import { createHttpServer } from "./http.js";
 import { registerCoreTools } from "./tools/index.js";
+import { flowTools } from "./tools/flows.js";
 
-export { browserSessionBlueprint } from "./blueprints/browser-session.js";
+export { browserSessionBlueprint, StaleRefError } from "./blueprints/browser-session.js";
 export type {
   BoundingBox,
   BrowserSession,
   BrowserSessionInput,
   ClickTarget,
   ComputedStyles,
+  ConsoleEntry,
+  CookieOp,
   DescribedElement,
+  DescribeOptions,
+  DragOptions,
+  FindOptions,
+  NetworkEntry,
   PageState,
+  PageView,
   PerformanceReport,
   Screenshot,
+  SettleOptions,
+  SettleResult,
+  StorageOp,
+  TabInfo,
+  TabOp,
+  ViewportOptions,
+  ViewportState,
+  WaitForOptions,
+  WaitForResult,
 } from "./blueprints/browser-session.js";
 export {
   compareStyles,
@@ -25,7 +43,37 @@ export {
   type StyleComparison,
   type CompareOptions,
 } from "./conformance.js";
-export { coreTools, registerCoreTools } from "./tools/index.js";
+export {
+  hasSecretPlaceholder,
+  listSecrets,
+  loadSecrets,
+  resolveSecrets,
+  type SecretListing,
+  type SecretLookup,
+  type SecretOptions,
+} from "./secrets.js";
+export { coreTools, registerCoreTools, AUTO_DESCRIBE_FLAG } from "./tools/index.js";
+export { diffPngs, type DiffOptions, type DiffRegion, type DiffResult } from "./visual-diff.js";
+export { screenshotDiff, type ScreenshotDiffArgs, type ScreenshotDiffResult } from "./screenshot-diff.js";
+export {
+  baselineDir,
+  executeStep,
+  flowsDir,
+  FlowParseError,
+  listFlows,
+  parseFlow,
+  parseStep,
+  readFlowFile,
+  resolveFlowPath,
+  runFlow,
+  writeFlowFile,
+  type Flow,
+  type FlowReport,
+  type RunOptions,
+  type Step,
+  type StepReport,
+  type Target,
+} from "./flows.js";
 export { createHttpServer } from "./http.js";
 export {
   clearDaemonInfo,
@@ -36,10 +84,47 @@ export {
   type DaemonHandshake,
 } from "./daemon.js";
 
+const SESSION_URN_PREFIX = "BrowserSession:";
+
+/**
+ * The one tool that needs the Registry itself: listing and closing live
+ * Browser Sessions. Every session name passed to another tool spawns a full
+ * Chromium that would otherwise live until the daemon stops.
+ */
+function sessionsTool(registry: Registry) {
+  const live = (): string[] =>
+    registry
+      .liveUrns()
+      .filter((urn) => urn.startsWith(SESSION_URN_PREFIX))
+      .map((urn) => urn.slice(SESSION_URN_PREFIX.length));
+  return defineTool({
+    name: "sessions",
+    description:
+      'List the live Browser Sessions, or `close` one to free its browser. Every other tool takes an optional `session` name (default "default") and lazily starts a browser for it; a session persists until closed here or until the daemon stops.',
+    input: z.object({
+      action: z.enum(["list", "close"]).default("list"),
+      session: z.string().optional(),
+    }),
+    execute: async (args) => {
+      if (args.action === "close") {
+        const name = args.session ?? "default";
+        if (!live().includes(name)) {
+          return { ok: false as const, error: "no_such_session", sessions: live() };
+        }
+        await registry.evict(`${SESSION_URN_PREFIX}${name}`);
+        return { ok: true as const, closed: name, sessions: live() };
+      }
+      return { sessions: live() };
+    },
+  });
+}
+
 /** Build a Registry with every tool registered. */
 export function createToolRegistry(options: RegistryOptions = {}): Registry {
   const registry = new Registry(options);
   registerCoreTools(registry);
+  registry.registerTool(sessionsTool(registry));
+  registry.registerTools(flowTools(registry));
   return registry;
 }
 

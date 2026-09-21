@@ -54,26 +54,13 @@ const WEIGHTS: Record<string, number> = {
   heavy: 900,
 };
 
-const COLOR_PROPS = new Set([
-  "color",
-  "backgroundColor",
-  "borderColor",
-  "fill",
-  "stroke",
-  "outlineColor",
-]);
-const LENGTH_PROPS = new Set([
-  "fontSize",
-  "lineHeight",
-  "letterSpacing",
-  "borderRadius",
-  "borderTopWidth",
-  "borderWidth",
-  "width",
-  "height",
-  "gap",
-]);
-const MULTI_LENGTH_PROPS = new Set(["padding", "margin"]);
+// Which comparison to use is decided by the *shape of the values*, not by a
+// list of property names. A name list silently mishandles every property nobody
+// thought to add: `borderBottomColor: "#e0e1e6"` vs `"rgb(224, 225, 230)"` is
+// the same color, but string equality calls it a mismatch — a design bug that
+// isn't real. The parsers are strict (parseColor takes only #hex/rgb(), and
+// parseLength only a single optionally-px number), so "solid" and "600" fall
+// through to the checks below them rather than being misread as color/length.
 
 function parseColor(input: string): Rgba | null {
   const s = input.trim().toLowerCase();
@@ -132,7 +119,15 @@ function compareOne(
 ): StyleComparison {
   const actual = actualRaw ?? null;
   const base = { property, expected, actual };
-  if (actual == null) return { ...base, match: false, note: "no computed value" };
+  // Reaching here means the browser had no value for the property even though
+  // it was explicitly requested — i.e. the name is not a CSS property this
+  // engine knows. Say so, rather than implying the element failed the check.
+  if (actual == null)
+    return {
+      ...base,
+      match: false,
+      note: `no computed value — "${property}" is not a recognized CSS property in this browser; check the spelling`,
+    };
 
   // Font family: pass if the expected primary family appears in the stack.
   if (property === "fontFamily") {
@@ -150,7 +145,7 @@ function compareOne(
   }
 
   // Color: hex or rgb(a) → numeric RGBA with per-channel tolerance.
-  if (COLOR_PROPS.has(property)) {
+  {
     const e = parseColor(expected);
     const a = parseColor(actual);
     if (e && a) {
@@ -168,7 +163,7 @@ function compareOne(
   }
 
   // Single length: compare as pixels with tolerance.
-  if (LENGTH_PROPS.has(property)) {
+  {
     const e = parseLength(expected);
     const a = parseLength(actual);
     if (e != null && a != null) {
@@ -177,11 +172,12 @@ function compareOne(
     }
   }
 
-  // Multi-value length (padding/margin): per-token, with shorthand expansion.
-  if (MULTI_LENGTH_PROPS.has(property)) {
+  // Multi-value length (padding/margin/inset/border-radius): per-token, with
+  // shorthand expansion. Reached only when the value is not a single length.
+  {
     const e = tokens(expected).map(parseLength);
     const a = tokens(actual).map(parseLength);
-    if (e.every((x) => x != null) && a.every((x) => x != null)) {
+    if (e.length > 0 && a.length > 0 && e.every((x) => x != null) && a.every((x) => x != null)) {
       const eVals = e as number[];
       const aVals = a as number[];
       let ok = false;

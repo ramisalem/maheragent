@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mkdtempSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -19,7 +20,7 @@ before(async () => {
   toolServer = await startToolServer();
 
   const tsClient = new ToolServerClient(toolServer.url, toolServer.token);
-  mcp = createMcpServer(tsClient, { name: "maheragent", version: "0.1.1" });
+  mcp = createMcpServer(tsClient, { name: "maheragent", version: "0.2.0" });
 
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await mcp.connect(serverT);
@@ -56,4 +57,40 @@ test("MCP CallTool reports a tool failure as an error result", async () => {
   const res = await client.callTool({ name: "navigate", arguments: { url: "not-a-url" } });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /invalid_args/);
+});
+
+test("MCP CallTool delivers a screenshot as an image block, not base64 text", async () => {
+  const res = await client.callTool({ name: "screenshot", arguments: {} });
+  assert.ok(!res.isError);
+  const image = res.content.find((c) => c.type === "image");
+  assert.ok(image, "an image block is present");
+  assert.equal(image.mimeType, "image/png");
+  assert.ok(image.data.startsWith("iVBORw0KGgo"), "PNG bytes");
+  for (const c of res.content) {
+    if (c.type === "text") assert.ok(!c.text.includes("iVBORw0KGgo"), "no base64 in text blocks");
+  }
+});
+
+test("MCP CallTool passes a page view through as text", async () => {
+  const res = await client.callTool({ name: "describe", arguments: {} });
+  const view = JSON.parse(res.content[0].text);
+  assert.equal(view.title, "Home");
+  assert.ok(Array.isArray(view.elements));
+});
+
+test("MCP CallTool lifts a nested diff image into an image block", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "maher-mcp-diff-"));
+  const baseline = join(dir, "home.png");
+  await client.callTool({ name: "screenshot-diff", arguments: { baseline, updateBaseline: true } });
+  await client.callTool({ name: "evaluate", arguments: { expression: "document.body.style.background = 'red'" } });
+  const res = await client.callTool({ name: "screenshot-diff", arguments: { baseline } });
+  assert.ok(!res.isError);
+  const text = res.content.find((c) => c.type === "text");
+  const payload = JSON.parse(text.text);
+  assert.equal(payload.matches, false);
+  assert.equal(payload.diff.base64, undefined, "base64 stripped from the text");
+  assert.ok(payload.diff.path.endsWith("home.diff.png"));
+  const image = res.content.find((c) => c.type === "image");
+  assert.equal(image?.mimeType, "image/png");
+  rmSync(dir, { recursive: true, force: true });
 });

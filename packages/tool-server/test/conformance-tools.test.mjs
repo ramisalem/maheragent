@@ -26,8 +26,8 @@ after(async () => {
 });
 
 const titleRef = async () => {
-  const els = await registry.execute("describe", {});
-  return els.find((e) => e.name === "Heading");
+  const { elements } = await registry.execute("describe", {});
+  return elements.find((e) => e.name === "Heading");
 };
 
 test("describe now returns a bounding box", async () => {
