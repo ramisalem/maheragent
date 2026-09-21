@@ -38,6 +38,16 @@ export type {
   WaitForResult,
 } from "./blueprints/browser-session.js";
 export {
+  BrowserInstallError,
+  installArgs,
+  installBrowser,
+  isMissingBrowserError,
+  launchChromium,
+  playwrightVersion,
+  withBrowserInstall,
+  type InstallOptions,
+} from "./browser-install.js";
+export {
   compareStyles,
   type ConformanceResult,
   type StyleComparison,

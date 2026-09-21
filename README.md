@@ -43,17 +43,22 @@ See [`CONTEXT.md`](CONTEXT.md) for the domain glossary.
 ## Install
 
 ```bash
-npm install -g maheragent     # pulls Chromium via Playwright on install
+npm install -g maheragent
 ```
 
 Then, **from the web app you want the agent to drive**:
 
 ```bash
 cd /path/to/your-web-app
-maheragent init                 # registers the MCP server + copies skills
+maheragent init                 # registers the MCP server, copies skills, downloads Chromium
 # maheragent init --editor cursor   # → .cursor/mcp.json
 # maheragent init --editor vscode   # → .vscode/mcp.json
 ```
+
+Playwright's npm package ships without browsers, so `init` downloads the Chromium build
+that maheragent's Playwright pins (headless shell, once). With `--no-browser`, the
+daemon downloads it on its first launch instead; `maheragent browser install` does it
+on demand, for CI images or before going offline.
 
 Restart your editor (or reload its MCP servers). The `maheragent` server appears with all
 its tools. Then just ask:
@@ -122,7 +127,8 @@ maheragent enable|disable <flag> [--project]
 maheragent secrets                       # names {{secret:NAME}} can resolve (never values)
 maheragent flow list                     # flows in .maheragent/flows/
 maheragent flow run <name|path> [--update-baselines] [--json]   # exit 1 on failure
-maheragent init|remove [--editor …]      # editor registration
+maheragent browser install [--headed]    # download the Chromium build the daemon launches
+maheragent init|remove [--editor …] [--no-browser]   # editor registration; init also fetches Chromium
 maheragent mcp                           # run the MCP adapter (what the editor launches)
 ```
 
@@ -185,7 +191,8 @@ Element Ref — so a recording survives re-renders. `wait`, `assert`, `snapshot`
 ## Watching the browser
 
 The daemon runs Chromium headless. Start it with `MAHERAGENT_HEADED=1` to watch the
-agent work in a real window.
+agent work in a real window. That needs full Chromium, which the first headed launch
+downloads (or run `maheragent browser install --headed` beforehand).
 
 ## Development
 

@@ -111,3 +111,16 @@ test("renderFlowReport prints one line per step and a verdict", () => {
   assert.match(text, /\[3\] · echo/);
   assert.match(text, /FAIL — 1 passed, 1 failed, 0 errored, 1 skipped/);
 });
+
+test("browser needs the install subcommand", async () => {
+  const { err, code } = await capture(["browser"]);
+  assert.match(err, /usage: maheragent browser install/);
+  assert.equal(code, 1);
+});
+
+test("browser install reports the Playwright build it made ready", async () => {
+  // Already downloaded for this suite, so the real installer has nothing to do.
+  const { out, code } = await capture(["browser", "install"]);
+  assert.match(out, /Chromium headless shell for Playwright \d+\.\d+\.\d+ is ready\./);
+  assert.equal(code, 0);
+});

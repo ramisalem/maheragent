@@ -30,6 +30,8 @@ export interface InitOptions {
   noAllowlist?: boolean;
   /** Run without prompts (CI / scripted). */
   yes?: boolean;
+  /** Skip downloading Chromium; the daemon then fetches it on first launch. */
+  noBrowser?: boolean;
 }
 
 function parse(argv: string[]): { command: string; opts: InitOptions } {
@@ -42,6 +44,7 @@ function parse(argv: string[]): { command: string; opts: InitOptions } {
     else if (a === "--global") opts.scope = "global";
     else if (a === "--local") opts.scope = "local";
     else if (a === "--no-allowlist") opts.noAllowlist = true;
+    else if (a === "--no-browser") opts.noBrowser = true;
     else if (a === "--yes" || a === "-y") opts.yes = true;
   }
   return { command, opts };
@@ -191,9 +194,46 @@ export async function init(argv: string[]): Promise<void> {
     banner,
   );
 
+  // ── Browser ───────────────────────────────────────────────────────────────
+  // Playwright's npm package ships without browsers, and each Playwright
+  // release pins its own Chromium build. Fetch it now, while the developer is
+  // watching, instead of stalling the agent's first tool call.
+  if (!opts.noBrowser) await browserStep(banner);
+
   const done = `Configured ${adapters.map((a) => a.name).join(", ")} (${scope}). Restart your editor to pick up the change.`;
   if (banner) p.outro(pc.green(done));
   else console.log(done);
+}
+
+/** Download the Chromium build the daemon launches. Never fails init: the daemon retries on first launch. */
+async function browserStep(banner: boolean): Promise<void> {
+  const { installBrowser, playwrightVersion } = await import("@ramisalem/tool-server");
+  const headless = !process.env.MAHERAGENT_HEADED;
+  let label = "Chromium for Playwright";
+  try {
+    label += ` ${playwrightVersion()}`;
+  } catch {
+    /* Playwright unresolvable: installBrowser reports it below */
+  }
+  const spinner = banner ? p.spinner() : null;
+  spinner?.start(`Checking ${label}`);
+  try {
+    await installBrowser({
+      headless,
+      output: (text) => {
+        const percents = [...text.matchAll(/(\d{1,3})%/g)];
+        const latest = percents[percents.length - 1]?.[1];
+        if (latest) spinner?.message(`Downloading ${label} (${latest}%)`);
+      },
+    });
+    if (spinner) spinner.stop(`${label} is ready`);
+    else console.log(`Browser:\n${pc.green("+")} ${label}`);
+  } catch (err) {
+    const reason = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    const hint = "The daemon retries on its first launch, or run `maheragent browser install`.";
+    if (spinner) spinner.error(`${label} could not be downloaded: ${reason}\n${hint}`);
+    else console.log(`Browser:\n${pc.red("x")} ${label}: ${pc.dim(reason)}\n  ${hint}`);
+  }
 }
 
 function report(title: string, lines: string[], banner: boolean): void {

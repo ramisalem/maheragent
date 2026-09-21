@@ -15,6 +15,7 @@ import {
   MCP_BINARY_NAME,
   FIGMA_SERVER_KEY,
   FIGMA_MCP_URL,
+  init,
 } from "@ramisalem/installer";
 
 let root;
@@ -147,4 +148,26 @@ test("copySkillsToTargets places the bundled SKILL.md files", () => {
   const [result] = copySkillsToTargets([target]);
   assert.equal(result.ok, true);
   assert.ok(existsSync(join(target.dir, "figma-conformance", "SKILL.md")));
+});
+
+test("init fetches the browser as its last step, and --no-browser skips it", async () => {
+  const project = mkdtempSync(join(tmpdir(), "maher-init-"));
+  const lines = [];
+  const log = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await init(["init", "--editor", "claude", "--yes", "--root", project, "--no-browser"]);
+    assert.ok(existsSync(join(project, ".mcp.json")), "the MCP server is still registered");
+    assert.ok(!lines.some((l) => l.startsWith("Browser:")), "no browser step");
+
+    lines.length = 0;
+    // The suite's browser is already downloaded, so this runs the real
+    // installer and finds nothing to do.
+    await init(["init", "--editor", "claude", "--yes", "--root", project]);
+    const browser = lines.find((l) => l.startsWith("Browser:"));
+    assert.match(browser ?? "", /\+.*Chromium for Playwright \d+\.\d+\.\d+/);
+  } finally {
+    console.log = log;
+    rmSync(project, { recursive: true, force: true });
+  }
 });

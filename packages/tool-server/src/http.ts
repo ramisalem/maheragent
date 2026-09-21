@@ -46,6 +46,9 @@ function errorResponse(err: unknown): { status: number; body: unknown } {
     return { status: 409, body: { error: "stale_ref", message } };
   }
   const message = err instanceof Error ? err.message : String(err);
+  if ((err as { name?: string })?.name === "BrowserInstallError") {
+    return { status: 500, body: { error: "browser_install_failed", message } };
+  }
   return { status: 500, body: { error: "tool_failed", message } };
 }
 
