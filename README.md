@@ -119,7 +119,7 @@ Copied into your workspace by `maheragent init`:
 The same daemon the editor uses is drivable from a terminal:
 
 ```bash
-maheragent server status|start|stop      # inspect / control the daemon
+maheragent server status|start|stop      # inspect / control the daemon (its errors: ~/.maheragent/daemon.log)
 maheragent tools [<name>]                # list tools, or show one tool's schema
 maheragent run <tool> [json-args]        # call a tool directly
 maheragent flags                         # list feature flags

@@ -4,12 +4,15 @@
 // process so the BrowserSession survives reconnects):
 //   1. If the discovery file points at a live daemon, reuse it.
 //   2. Otherwise spawn the tool-server bin *detached*, read its handshake line
-//      from stdout, then unref it so this process can exit independently.
+//      from stdout, then unref it so this process can exit independently. Its
+//      stderr goes to daemon.log, never to ours (see daemonLogPath).
 
 import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readDaemonInfo, type DaemonHandshake } from "@ramisalem/tool-server";
+import { daemonHome, readDaemonInfo, type DaemonHandshake } from "@ramisalem/tool-server";
 import { ToolServerClient } from "./client.js";
 
 const require = createRequire(import.meta.url);
@@ -27,6 +30,16 @@ function toolServerBin(): string {
   }
 }
 
+/**
+ * Where the daemon's stderr goes. The daemon outlives whoever spawned it, so
+ * it must not inherit their stderr: a pipe it holds never reaches EOF, and
+ * whatever reads that pipe — `maheragent server start 2>&1 | cat`, an MCP
+ * client waiting for its server to close — waits as long as the daemon lives.
+ */
+export function daemonLogPath(): string {
+  return join(daemonHome(), "daemon.log");
+}
+
 /** Return a client for a live daemon, reusing one if already running. */
 export async function ensureToolServer(): Promise<ToolServerClient> {
   const existing = await readDaemonInfo();
@@ -41,11 +54,14 @@ export async function ensureToolServer(): Promise<ToolServerClient> {
 /** Spawn the daemon detached and resolve once it prints its handshake line. */
 export function spawnDaemon(timeoutMs = 15_000): Promise<DaemonHandshake> {
   return new Promise<DaemonHandshake>((resolve, reject) => {
+    mkdirSync(daemonHome(), { recursive: true });
+    const log = openSync(daemonLogPath(), "a");
     const child = spawn(process.execPath, [toolServerBin()], {
       detached: true,
-      // stdout: read the one-line handshake. stderr inherited for diagnostics.
-      stdio: ["ignore", "pipe", "inherit"],
+      // stdout: read the one-line handshake. stderr: the log file.
+      stdio: ["ignore", "pipe", log],
     });
+    closeSync(log); // the daemon holds its own copy
 
     let buffer = "";
     let settled = false;
@@ -61,13 +77,15 @@ export function spawnDaemon(timeoutMs = 15_000): Promise<DaemonHandshake> {
     const timer = setTimeout(() => {
       done(() => {
         child.kill();
-        reject(new Error("Timed out waiting for the tool-server to start."));
+        reject(new Error(`Timed out waiting for the tool-server to start; see ${daemonLogPath()}.`));
       });
     }, timeoutMs);
 
     child.on("error", (err) => done(() => reject(err)));
     child.on("exit", (code) =>
-      done(() => reject(new Error(`tool-server exited before handshake (code ${code}).`))),
+      done(() =>
+        reject(new Error(`tool-server exited before handshake (code ${code}); see ${daemonLogPath()}.`)),
+      ),
     );
 
     child.stdout?.setEncoding("utf8");
