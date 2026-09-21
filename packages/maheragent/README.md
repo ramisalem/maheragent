@@ -7,7 +7,7 @@ An agentic toolkit that gives an AI assistant direct control of a web app over
 npm install -g maheragent
 
 cd /path/to/your-web-app
-maheragent init        # register the MCP server + copy skills, then restart your editor
+maheragent init        # register the MCP server, copy skills, download Chromium; then restart your editor
 ```
 
 `maheragent` is the umbrella CLI; it routes to `@ramisalem/mcp`, `@ramisalem/cli`, and

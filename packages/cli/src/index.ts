@@ -5,13 +5,16 @@
 //   flags | enable | disable   read and toggle feature flags
 //   secrets                    list the names {{secret:NAME}} can resolve (never values)
 //   flow list | run <name>     replay a recorded flow; exit 1 when it fails (CI)
+//   browser install            download the Chromium build the daemon launches
 // Everything that needs the browser goes through the same daemon the editor
 // uses, so the CLI and the agent share one live session.
 
 import { ensureToolServer, ToolCallError, ToolServerClient } from "@ramisalem/mcp";
 import {
   clearDaemonInfo,
+  installBrowser,
   listFlows,
+  playwrightVersion,
   listSecrets,
   readDaemonInfo,
   resolveFlowPath,
@@ -31,7 +34,8 @@ Usage:
   maheragent secrets
   maheragent flow list
   maheragent flow run <name|path> [--update-baselines] [--json]
-  maheragent init|remove [--editor claude|cursor|vscode]
+  maheragent browser install [--headed]
+  maheragent init|remove [--editor claude|cursor|vscode] [--no-browser]
   maheragent mcp
 `;
 
@@ -58,6 +62,8 @@ export async function runCli(argv: string[]): Promise<void> {
       return secrets();
     case "flow":
       return flow(rest);
+    case "browser":
+      return browser(rest);
     case "enable":
       return toggle(rest, true);
     case "disable":
@@ -246,6 +252,27 @@ async function flow(rest: string[]): Promise<void> {
       return;
     }
     throw err;
+  }
+}
+
+async function browser(rest: string[]): Promise<void> {
+  const [sub, ...args] = rest;
+  if (sub !== "install") {
+    console.error("usage: maheragent browser install [--headed]");
+    process.exitCode = 1;
+    return;
+  }
+  // Headless launches need only the headless shell; --headed (or a daemon run
+  // with MAHERAGENT_HEADED) needs full Chromium as well.
+  const headless = !(args.includes("--headed") || process.env.MAHERAGENT_HEADED);
+  const label = `Chromium${headless ? " headless shell" : ""} for Playwright ${playwrightVersion()}`;
+  console.log(`Installing ${label}…`);
+  try {
+    await installBrowser({ headless, output: "inherit" });
+    console.log(`${label} is ready.`);
+  } catch (err) {
+    console.error(`Could not install ${label}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
   }
 }
 

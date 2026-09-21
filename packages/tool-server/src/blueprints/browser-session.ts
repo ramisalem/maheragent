@@ -3,7 +3,6 @@
 // and viewport across Tool calls. Backed by Playwright (bundled Chromium).
 
 import {
-  chromium,
   type Browser,
   type BrowserContext,
   type Cookie,
@@ -12,6 +11,7 @@ import {
   type Page,
 } from "playwright";
 import { defineBlueprint } from "@ramisalem/registry";
+import { launchChromium } from "../browser-install.js";
 
 export interface BrowserSessionInput {
   sessionId: string;
@@ -1347,7 +1347,8 @@ export const browserSessionBlueprint = defineBlueprint<
     // MAHERAGENT_HEADED=1 shows the browser window so a developer can watch
     // the agent work.
     const headless = !process.env.MAHERAGENT_HEADED;
-    const browser = await chromium.launch({ headless });
+    // The first launch on a fresh install also downloads Chromium.
+    const browser = await launchChromium(headless);
     const context = await browser.newContext(baseUrl ? { baseURL: baseUrl } : {});
     context.setDefaultTimeout(ACTION_TIMEOUT_MS);
     const page = await context.newPage();
